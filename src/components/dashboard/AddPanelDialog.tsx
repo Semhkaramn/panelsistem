@@ -22,8 +22,9 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { usePanelStore } from "@/store/panels";
-import { Globe, Lock, Target, Clock, Info, Wand2 } from "lucide-react";
+import { Globe, Lock, Target, Clock, Info, Wand2, MousePointer2 } from "lucide-react";
 import { toast } from "sonner";
+import { ElementPicker } from "./ElementPicker";
 
 interface Panel {
   id: string;
@@ -69,6 +70,7 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
   });
 
   const [selectorType, setSelectorType] = useState("custom");
+  const [elementPickerOpen, setElementPickerOpen] = useState(false);
 
   useEffect(() => {
     if (editPanel) {
@@ -298,6 +300,26 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
             </TabsContent>
 
             <TabsContent value="selector" className="space-y-4 mt-4">
+              {/* Element Picker Button */}
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full gap-2 h-12 bg-primary/5 border-primary/30 hover:bg-primary/10"
+                onClick={() => setElementPickerOpen(true)}
+              >
+                <MousePointer2 className="h-5 w-5 text-primary" />
+                Görsel Element Seçici Aç
+              </Button>
+
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t border-border" />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-background px-2 text-muted-foreground">veya</span>
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <Label>Element Seçici Şablonu</Label>
                 <Select value={selectorType} onValueChange={handleSelectorChange}>
@@ -353,6 +375,19 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
             </Button>
           </DialogFooter>
         </form>
+
+        <ElementPicker
+          open={elementPickerOpen}
+          onOpenChange={setElementPickerOpen}
+          initialUrl={formData.targetUrl}
+          onSelectElement={(selector, preview) => {
+            setFormData((prev) => ({ ...prev, elementSelector: selector }));
+            setSelectorType("custom");
+            if (preview) {
+              toast.success(`Element seçildi: ${preview.substring(0, 50)}...`);
+            }
+          }}
+        />
       </DialogContent>
     </Dialog>
   );
