@@ -41,6 +41,7 @@ interface Panel {
   loginUrl: string;
   targetUrl: string;
   email: string;
+  password: string;
   elementSelector: string;
   elementLabel: string;
   isActive: boolean;
