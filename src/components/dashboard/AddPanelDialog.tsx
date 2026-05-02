@@ -67,6 +67,7 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
     elementSelector: "",
     elementLabel: "Komisyon",
     checkInterval: 30,
+    isActive: true,
   });
 
   const [selectorType, setSelectorType] = useState("custom");
@@ -83,6 +84,7 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
         elementSelector: editPanel.elementSelector,
         elementLabel: editPanel.elementLabel,
         checkInterval: editPanel.checkInterval,
+        isActive: true,
       });
       setSelectorType("custom");
     } else {
@@ -95,6 +97,7 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
         elementSelector: "",
         elementLabel: "Komisyon",
         checkInterval: 30,
+        isActive: true,
       });
       setSelectorType("custom");
     }
