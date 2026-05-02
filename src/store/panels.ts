@@ -25,6 +25,7 @@ interface Settings {
   dailyReportTime: string;
   dailyReportEnabled: boolean;
   timezone: string;
+  hasToken?: boolean;
 }
 
 interface PanelStore {
