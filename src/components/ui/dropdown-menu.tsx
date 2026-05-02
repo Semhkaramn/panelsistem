@@ -83,19 +83,36 @@ function DropdownMenuContent({
   );
 }
 
+interface DropdownMenuItemProps extends React.HTMLAttributes<HTMLDivElement> {
+  asChild?: boolean;
+}
+
 function DropdownMenuItem({
   className,
   children,
+  asChild,
   ...props
-}: React.HTMLAttributes<HTMLDivElement>) {
+}: DropdownMenuItemProps) {
   const context = React.useContext(DropdownContext);
+
+  const itemClasses = cn(
+    "relative flex cursor-pointer select-none items-center rounded-md px-2 py-1.5 text-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground",
+    className
+  );
+
+  if (asChild && React.isValidElement(children)) {
+    return React.cloneElement(children as React.ReactElement<{ className?: string; onClick?: (e: React.MouseEvent) => void }>, {
+      className: cn(itemClasses, (children as React.ReactElement<{ className?: string }>).props.className),
+      onClick: (e: React.MouseEvent) => {
+        (children as React.ReactElement<{ onClick?: (e: React.MouseEvent) => void }>).props.onClick?.(e);
+        context?.setOpen(false);
+      },
+    });
+  }
 
   return (
     <div
-      className={cn(
-        "relative flex cursor-pointer select-none items-center rounded-md px-2 py-1.5 text-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground",
-        className
-      )}
+      className={itemClasses}
       onClick={(e) => {
         props.onClick?.(e);
         context?.setOpen(false);
