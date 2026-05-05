@@ -5,18 +5,48 @@ export interface TelegramMessage {
   parseMode?: "HTML" | "Markdown";
 }
 
-export async function getSettings() {
-  let settings = await prisma.settings.findUnique({
-    where: { id: "default" },
+// Environment variables as fallback
+const ENV_TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const ENV_TELEGRAM_CHAT_IDS = process.env.TELEGRAM_CHAT_IDS?.split(",").filter(Boolean) || [];
+
+function log(message: string): void {
+  const timestamp = new Date().toLocaleString("tr-TR", {
+    timeZone: "Europe/Istanbul",
   });
+  console.log(`[${timestamp}] ${message}`);
+}
 
-  if (!settings) {
-    settings = await prisma.settings.create({
-      data: { id: "default" },
+export async function getSettings() {
+  try {
+    let settings = await prisma.settings.findUnique({
+      where: { id: "default" },
     });
-  }
 
-  return settings;
+    if (!settings) {
+      settings = await prisma.settings.create({
+        data: {
+          id: "default",
+          telegramToken: ENV_TELEGRAM_TOKEN || null,
+          telegramChatIds: ENV_TELEGRAM_CHAT_IDS,
+        },
+      });
+    }
+
+    return settings;
+  } catch (error) {
+    // If database is not available, return env-based settings
+    log("⚠️ Veritabanı bağlantısı yok, env değişkenleri kullanılıyor");
+    return {
+      id: "default",
+      telegramToken: ENV_TELEGRAM_TOKEN || null,
+      telegramChatIds: ENV_TELEGRAM_CHAT_IDS,
+      dailyReportTime: "00:00",
+      dailyReportEnabled: true,
+      timezone: "Europe/Istanbul",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+  }
 }
 
 export async function sendTelegramMessage(
@@ -24,16 +54,19 @@ export async function sendTelegramMessage(
   options?: { token?: string; chatIds?: string[] }
 ) {
   const settings = await getSettings();
-  const token = options?.token || settings.telegramToken;
-  const chatIds = options?.chatIds || settings.telegramChatIds;
+
+  // Use provided options, then settings, then env variables
+  const token = options?.token || settings.telegramToken || ENV_TELEGRAM_TOKEN;
+  const chatIds = options?.chatIds ||
+    (settings.telegramChatIds.length > 0 ? settings.telegramChatIds : ENV_TELEGRAM_CHAT_IDS);
 
   if (!token) {
-    console.error("Telegram bot token not configured");
+    log("❌ Telegram bot token ayarlanmamış!");
     return { success: false, error: "Token not configured" };
   }
 
   if (!chatIds || chatIds.length === 0) {
-    console.error("No Telegram chat IDs configured");
+    log("❌ Telegram chat ID'leri ayarlanmamış!");
     return { success: false, error: "No chat IDs configured" };
   }
 
@@ -57,15 +90,19 @@ export async function sendTelegramMessage(
       const data = await response.json();
 
       if (data.ok) {
+        log(`✅ Telegram gönderildi: ${chatId}`);
         results.push({ chatId, success: true });
       } else {
+        log(`❌ Telegram hatası (${chatId}): ${data.description}`);
         results.push({ chatId, success: false, error: data.description });
       }
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "Unknown error";
+      log(`❌ Telegram hatası (${chatId}): ${errorMsg}`);
       results.push({
         chatId,
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: errorMsg,
       });
     }
   }
@@ -91,18 +128,24 @@ export async function sendPanelChangeNotification(
 
 🕐 ${timestamp}`;
 
+  log(`🚨 Değer değişti! ${panelName}: ${oldValue} → ${newValue}`);
+
   const result = await sendTelegramMessage(message);
 
-  // Log notification
-  await prisma.notificationLog.create({
-    data: {
-      panelName,
-      type: "change",
-      message,
-      success: result.success,
-      error: result.success ? null : JSON.stringify(result),
-    },
-  });
+  // Log notification to database
+  try {
+    await prisma.notificationLog.create({
+      data: {
+        panelName,
+        type: "change",
+        message,
+        success: result.success,
+        error: result.success ? null : JSON.stringify(result),
+      },
+    });
+  } catch (error) {
+    log("⚠️ Bildirim log kaydedilemedi");
+  }
 
   return result;
 }
@@ -129,14 +172,18 @@ export async function sendDailyReport(
 
   const result = await sendTelegramMessage(message);
 
-  await prisma.notificationLog.create({
-    data: {
-      type: "daily_report",
-      message,
-      success: result.success,
-      error: result.success ? null : JSON.stringify(result),
-    },
-  });
+  try {
+    await prisma.notificationLog.create({
+      data: {
+        type: "daily_report",
+        message,
+        success: result.success,
+        error: result.success ? null : JSON.stringify(result),
+      },
+    });
+  } catch (error) {
+    log("⚠️ Rapor log kaydedilemedi");
+  }
 
   return result;
 }
@@ -153,17 +200,33 @@ export async function sendErrorNotification(panelName: string, error: string) {
 
 🕐 ${timestamp}`;
 
+  log(`❌ Hata bildirimi: ${panelName} - ${error}`);
+
   const result = await sendTelegramMessage(message);
 
-  await prisma.notificationLog.create({
-    data: {
-      panelName,
-      type: "error",
-      message,
-      success: result.success,
-      error: result.success ? null : JSON.stringify(result),
-    },
-  });
+  try {
+    await prisma.notificationLog.create({
+      data: {
+        panelName,
+        type: "error",
+        message,
+        success: result.success,
+        error: result.success ? null : JSON.stringify(result),
+      },
+    });
+  } catch (error) {
+    log("⚠️ Hata log kaydedilemedi");
+  }
 
   return result;
+}
+
+// Test telegram connection
+export async function testTelegramConnection(token?: string, chatIds?: string[]) {
+  const message = `🔔 <b>Test Bildirimi</b>
+
+✅ Telegram bağlantısı başarılı!
+🕐 ${new Date().toLocaleString("tr-TR", { timeZone: "Europe/Istanbul" })}`;
+
+  return await sendTelegramMessage(message, { token, chatIds });
 }
