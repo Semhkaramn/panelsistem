@@ -5,7 +5,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -13,7 +12,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { usePanelStore } from "@/store/panels";
 import {
   Globe,
@@ -31,7 +29,8 @@ import {
   Eye,
   EyeOff,
   Crosshair,
-  Save
+  Save,
+  ExternalLink
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -53,19 +52,13 @@ interface AddPanelDialogProps {
   editPanel?: Panel | null;
 }
 
-interface DetectedInput {
+interface SelectedElement {
   selector: string;
-  type: string;
-  name: string;
-  placeholder: string;
-  label: string;
-}
-
-interface DetectedElement {
-  selector: string;
+  xpath: string;
   text: string;
   tagName: string;
-  rect: { x: number; y: number; width: number; height: number };
+  className: string;
+  id: string;
 }
 
 type Step = "browse" | "login" | "select" | "confirm";
@@ -82,16 +75,13 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
   const [pageLoading, setPageLoading] = useState(false);
   const [pageHtml, setPageHtml] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
-
-  // Login detection
-  const [detectedInputs, setDetectedInputs] = useState<DetectedInput[]>([]);
-  const [emailSelector, setEmailSelector] = useState("");
-  const [passwordSelector, setPasswordSelector] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
 
   // Element selection
   const [selectMode, setSelectMode] = useState(false);
-  const [detectedElements, setDetectedElements] = useState<DetectedElement[]>([]);
-  const [hoveredElement, setHoveredElement] = useState<string | null>(null);
+  const [selectedElement, setSelectedElement] = useState<SelectedElement | null>(null);
+  const [hoveredSelector, setHoveredSelector] = useState<string | null>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   // Form data
   const [formData, setFormData] = useState({
@@ -138,10 +128,139 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
         setUrl("");
         setCurrentUrl("");
         setPageHtml(null);
+        setPageError(null);
+        setSelectedElement(null);
+        setSelectMode(false);
         setStep("browse");
       }
     }
   }, [editPanel, open]);
+
+  // Generate unique selector for element
+  const generateSelector = useCallback((element: Element): string => {
+    if (element.id) {
+      return `#${element.id}`;
+    }
+
+    const tagName = element.tagName.toLowerCase();
+
+    // Try class-based selector
+    if (element.className && typeof element.className === 'string') {
+      const classes = element.className.split(' ').filter(c => c && !c.includes(':'));
+      if (classes.length > 0) {
+        const classSelector = `.${classes[0]}`;
+        // Check if unique
+        const matches = document.querySelectorAll(classSelector);
+        if (matches.length === 1) {
+          return classSelector;
+        }
+      }
+    }
+
+    // Try nth-child
+    const parent = element.parentElement;
+    if (parent) {
+      const siblings = Array.from(parent.children);
+      const index = siblings.indexOf(element) + 1;
+      const parentSelector = generateSelector(parent);
+      return `${parentSelector} > ${tagName}:nth-child(${index})`;
+    }
+
+    return tagName;
+  }, []);
+
+  // Generate XPath for element
+  const generateXPath = useCallback((element: Element): string => {
+    if (element.id) {
+      return `//*[@id="${element.id}"]`;
+    }
+
+    const parts: string[] = [];
+    let current: Element | null = element;
+
+    while (current && current.nodeType === Node.ELEMENT_NODE) {
+      let index = 1;
+      let sibling = current.previousElementSibling;
+
+      while (sibling) {
+        if (sibling.tagName === current.tagName) {
+          index++;
+        }
+        sibling = sibling.previousElementSibling;
+      }
+
+      const tagName = current.tagName.toLowerCase();
+      parts.unshift(`${tagName}[${index}]`);
+      current = current.parentElement;
+    }
+
+    return '/' + parts.join('/');
+  }, []);
+
+  // Handle Ctrl+Click on content
+  const handleContentClick = useCallback((e: React.MouseEvent) => {
+    if (!selectMode) return;
+
+    // Check for Ctrl key
+    if (!e.ctrlKey && !e.metaKey) {
+      toast.info("Ctrl + Sol Tık ile element seçin", {
+        description: "Ctrl tuşunu basılı tutarak istediğiniz elemente tıklayın"
+      });
+      return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const target = e.target as HTMLElement;
+
+    // Don't select the container itself
+    if (target === contentRef.current) return;
+
+    const selector = generateSelector(target);
+    const xpath = generateXPath(target);
+
+    setSelectedElement({
+      selector,
+      xpath,
+      text: target.textContent?.trim().substring(0, 100) || "",
+      tagName: target.tagName.toLowerCase(),
+      className: target.className || "",
+      id: target.id || "",
+    });
+
+    setFormData(prev => ({
+      ...prev,
+      elementSelector: selector,
+      targetUrl: currentUrl
+    }));
+
+    toast.success("Element seçildi!", {
+      description: `${target.tagName.toLowerCase()}: ${target.textContent?.trim().substring(0, 30)}...`
+    });
+  }, [selectMode, currentUrl, generateSelector, generateXPath]);
+
+  // Handle mouseover for highlight
+  const handleContentMouseOver = useCallback((e: React.MouseEvent) => {
+    if (!selectMode) return;
+
+    const target = e.target as HTMLElement;
+    if (target === contentRef.current) return;
+
+    // Add highlight
+    target.style.outline = "2px solid #f59e0b";
+    target.style.outlineOffset = "2px";
+    target.style.cursor = "crosshair";
+  }, [selectMode]);
+
+  const handleContentMouseOut = useCallback((e: React.MouseEvent) => {
+    if (!selectMode) return;
+
+    const target = e.target as HTMLElement;
+    target.style.outline = "";
+    target.style.outlineOffset = "";
+    target.style.cursor = "";
+  }, [selectMode]);
 
   // Load page via proxy
   const loadPage = useCallback(async (targetUrl: string) => {
@@ -153,8 +272,7 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
     setPageLoading(true);
     setPageError(null);
     setPageHtml(null);
-    setDetectedInputs([]);
-    setDetectedElements([]);
+    setSelectedElement(null);
 
     try {
       const response = await fetch("/api/proxy", {
@@ -171,6 +289,7 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
 
       setPageHtml(data.html);
       setCurrentUrl(targetUrl);
+      setBaseUrl(data.baseUrl);
 
       // Auto-detect panel name from URL
       try {
@@ -186,89 +305,6 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
         }
       } catch {}
 
-      // Detect login inputs
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(data.html, "text/html");
-
-      const inputs: DetectedInput[] = [];
-      const inputEls = doc.querySelectorAll('input[type="email"], input[type="text"], input[type="password"], input[name*="email"], input[name*="user"], input[name*="login"], input[name*="pass"]');
-
-      inputEls.forEach((el) => {
-        const input = el as HTMLInputElement;
-        let selector = "";
-        if (input.id) selector = `#${input.id}`;
-        else if (input.name) selector = `input[name="${input.name}"]`;
-        else if (input.className) selector = `input.${input.className.split(" ")[0]}`;
-
-        const label = doc.querySelector(`label[for="${input.id}"]`)?.textContent || "";
-
-        inputs.push({
-          selector,
-          type: input.type,
-          name: input.name || "",
-          placeholder: input.placeholder || "",
-          label: label.trim()
-        });
-      });
-
-      setDetectedInputs(inputs);
-
-      // Auto-select email/password fields
-      const emailInput = inputs.find(i =>
-        i.type === "email" ||
-        i.name.toLowerCase().includes("email") ||
-        i.name.toLowerCase().includes("user") ||
-        i.placeholder.toLowerCase().includes("email")
-      );
-      const passInput = inputs.find(i =>
-        i.type === "password" ||
-        i.name.toLowerCase().includes("pass")
-      );
-
-      if (emailInput) setEmailSelector(emailInput.selector);
-      if (passInput) setPasswordSelector(passInput.selector);
-
-      // Detect value elements for selection
-      const elements: DetectedElement[] = [];
-      const valueSelectors = [
-        "h1", "h2", "h3", "h4",
-        ".value", ".amount", ".balance", ".total", ".commission",
-        "[class*='value']", "[class*='amount']", "[class*='balance']",
-        "button", ".btn",
-        "td", "th",
-        ".card-value", ".stat-value"
-      ];
-
-      for (const sel of valueSelectors) {
-        try {
-          doc.querySelectorAll(sel).forEach((el) => {
-            const text = el.textContent?.trim();
-            if (text && text.length < 50 && text.length > 0) {
-              let selector = sel;
-              if ((el as HTMLElement).id) {
-                selector = `#${(el as HTMLElement).id}`;
-              } else if ((el as HTMLElement).className && typeof (el as HTMLElement).className === "string") {
-                const classes = (el as HTMLElement).className.split(" ").filter(c => c && !c.includes(":"));
-                if (classes.length > 0) {
-                  selector = `.${classes[0]}`;
-                }
-              }
-
-              if (!elements.some(e => e.selector === selector)) {
-                elements.push({
-                  selector,
-                  text,
-                  tagName: el.tagName.toLowerCase(),
-                  rect: { x: 0, y: 0, width: 100, height: 30 }
-                });
-              }
-            }
-          });
-        } catch {}
-      }
-
-      setDetectedElements(elements);
-
     } catch (err) {
       setPageError(err instanceof Error ? err.message : "Sayfa yüklenemedi");
     } finally {
@@ -276,8 +312,8 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
     }
   }, [formData.name]);
 
-  // Handle URL submit - sayfa yenileme engellendi
-  const handleUrlSubmit = (e: React.FormEvent) => {
+  // Handle URL submit
+  const handleUrlSubmit = useCallback((e?: React.FormEvent) => {
     if (e) {
       e.preventDefault();
       e.stopPropagation();
@@ -291,16 +327,7 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
       loadPage(finalUrl);
     }
     return false;
-  };
-
-  // Enter tuşu ile URL'ye git
-  const handleUrlKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      e.stopPropagation();
-      handleUrlSubmit(e as unknown as React.FormEvent);
-    }
-  };
+  }, [url, loadPage]);
 
   // Handle final submit
   const handleSubmit = async () => {
@@ -319,22 +346,11 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
         toast.success("Panel eklendi");
       }
       onOpenChange(false);
-    } catch {
+    } catch (err) {
       toast.error("İşlem başarısız oldu");
     } finally {
       setLoading(false);
     }
-  };
-
-  // Select element
-  const handleSelectElement = (element: DetectedElement) => {
-    setFormData(prev => ({
-      ...prev,
-      elementSelector: element.selector,
-      targetUrl: currentUrl
-    }));
-    setSelectMode(false);
-    toast.success(`Element seçildi: ${element.text.substring(0, 30)}...`);
   };
 
   // Steps info
@@ -349,14 +365,14 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl max-h-[95vh] overflow-hidden flex flex-col p-0">
+      <DialogContent className="max-w-6xl max-h-[95vh] overflow-hidden flex flex-col p-0">
         {/* Header */}
         <DialogHeader className="p-4 pb-2 border-b border-border/50">
           <DialogTitle className="flex items-center gap-2 text-lg">
             {editPanel ? "Panel Düzenle" : "Yeni Panel Ekle"}
           </DialogTitle>
           <DialogDescription className="text-sm">
-            Tarayıcı gibi siteye gidin, giriş bilgilerini girin ve izlenecek elementi seçin
+            Siteye gidin, giriş bilgilerini girin ve <strong>Ctrl + Sol Tık</strong> ile izlenecek elementi seçin
           </DialogDescription>
 
           {/* Progress Steps */}
@@ -367,7 +383,6 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
                   type="button"
                   onClick={(e) => {
                     e.preventDefault();
-                    e.stopPropagation();
                     if (i <= currentStepIndex || pageHtml) setStep(s.id as Step);
                   }}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
@@ -389,7 +404,7 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
           </div>
         </DialogHeader>
 
-        {/* Browser Bar - Form yerine div kullanıldı, sayfa yenileme yok */}
+        {/* Browser Bar */}
         <div className="px-4 py-2 border-b border-border/50 bg-secondary/30">
           <div className="flex items-center gap-2">
             <Button
@@ -406,10 +421,15 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
             <div className="relative flex-1">
               <Globe className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="https://partner.example.com/login adresini yazın..."
+                placeholder="https://example.com/login yazın ve Enter'a basın..."
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
-                onKeyDown={handleUrlKeyDown}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleUrlSubmit();
+                  }
+                }}
                 className="pl-9 pr-4 h-9 bg-background"
                 autoComplete="off"
               />
@@ -419,10 +439,7 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
               type="button"
               disabled={pageLoading || !url}
               className="h-9 px-4"
-              onClick={(e) => {
-                e.preventDefault();
-                handleUrlSubmit(e as unknown as React.FormEvent);
-              }}
+              onClick={() => handleUrlSubmit()}
             >
               {pageLoading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -433,190 +450,188 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
                 </>
               )}
             </Button>
+
+            {currentUrl && (
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => window.open(currentUrl, '_blank')}
+                title="Yeni sekmede aç"
+              >
+                <ExternalLink className="h-4 w-4" />
+              </Button>
+            )}
           </div>
         </div>
 
         {/* Main Content */}
-        <div className="flex-1 overflow-hidden">
-          {/* Step: Browse */}
-          {step === "browse" && (
-            <div className="h-full flex">
-              {/* Page Preview */}
-              <div className="flex-1 bg-white overflow-auto">
-                {pageLoading && (
-                  <div className="h-full flex items-center justify-center">
-                    <div className="text-center">
-                      <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2 text-primary" />
-                      <p className="text-muted-foreground">Sayfa yükleniyor...</p>
-                    </div>
+        <div className="flex-1 overflow-hidden flex">
+          {/* Left Side - Page Content */}
+          <div className="flex-1 overflow-auto bg-white relative">
+            {pageLoading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
+                <div className="text-center">
+                  <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2 text-primary" />
+                  <p className="text-muted-foreground">Sayfa yükleniyor...</p>
+                </div>
+              </div>
+            )}
+
+            {pageError && (
+              <div className="h-full flex items-center justify-center p-4">
+                <div className="text-center max-w-md">
+                  <X className="h-10 w-10 mx-auto mb-2 text-red-400" />
+                  <p className="text-red-400 font-medium">Sayfa yüklenemedi</p>
+                  <p className="text-sm text-muted-foreground mt-1">{pageError}</p>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Bazı siteler iframe/proxy'yi engeller. Siteyi yeni sekmede açıp manuel olarak CSS seçici girebilirsiniz.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {!pageLoading && !pageError && !pageHtml && (
+              <div className="h-full flex items-center justify-center p-4">
+                <div className="text-center max-w-md">
+                  <Globe className="h-12 w-12 mx-auto mb-3 text-muted-foreground/30" />
+                  <p className="text-lg font-medium">Panel URL'sini Girin</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Üstteki adres çubuğuna panelin giriş sayfasının adresini yazın ve Enter'a basın
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {pageHtml && !pageLoading && (
+              <div className="relative">
+                {/* Select Mode Banner */}
+                {step === "select" && (
+                  <div className="sticky top-0 left-0 right-0 z-20 p-2 bg-amber-500 text-black text-sm text-center font-medium">
+                    <Crosshair className="h-4 w-4 inline mr-2" />
+                    {selectMode
+                      ? "Ctrl + Sol Tık ile izlemek istediğiniz elemente tıklayın"
+                      : "'Element Seçim Modu' butonuna tıklayın"}
                   </div>
                 )}
 
-                {pageError && (
-                  <div className="h-full flex items-center justify-center p-4">
-                    <div className="text-center max-w-md">
-                      <X className="h-10 w-10 mx-auto mb-2 text-red-400" />
-                      <p className="text-red-400 font-medium">Sayfa yüklenemedi</p>
-                      <p className="text-sm text-muted-foreground mt-1">{pageError}</p>
-                    </div>
-                  </div>
-                )}
+                {/* Page Content */}
+                <div
+                  ref={contentRef}
+                  className={`p-4 ${selectMode ? 'select-none' : ''}`}
+                  onClick={handleContentClick}
+                  onMouseOver={handleContentMouseOver}
+                  onMouseOut={handleContentMouseOut}
+                  dangerouslySetInnerHTML={{ __html: pageHtml }}
+                  style={{
+                    pointerEvents: selectMode ? 'auto' : 'none',
+                    userSelect: selectMode ? 'none' : 'auto'
+                  }}
+                />
+              </div>
+            )}
+          </div>
 
-                {!pageLoading && !pageError && !pageHtml && (
-                  <div className="h-full flex items-center justify-center p-4">
-                    <div className="text-center max-w-md">
-                      <Globe className="h-12 w-12 mx-auto mb-3 text-muted-foreground/30" />
-                      <p className="text-lg font-medium">Panel URL'sini Girin</p>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        Üstteki adres çubuğuna panelin giriş sayfasının adresini yazın
+          {/* Right Side - Panel */}
+          <div className="w-80 border-l border-border bg-background flex flex-col overflow-hidden">
+            {/* Step: Browse */}
+            {step === "browse" && pageHtml && (
+              <div className="p-4 space-y-4 overflow-auto flex-1">
+                <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
+                  <div className="flex gap-2">
+                    <Check className="h-4 w-4 text-green-400 mt-0.5 shrink-0" />
+                    <div>
+                      <p className="text-sm text-green-400 font-medium">Sayfa Yüklendi</p>
+                      <p className="text-xs text-muted-foreground mt-1 break-all">
+                        {currentUrl}
                       </p>
                     </div>
                   </div>
-                )}
-
-                {pageHtml && !pageLoading && (
-                  <div className="p-4">
-                    <div className="mb-3 p-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-400 text-xs flex items-center gap-2">
-                      <Info className="h-4 w-4" />
-                      Sayfa yüklendi. Sağ panelden giriş alanlarını seçin veya "Devam Et" butonuna tıklayın.
-                    </div>
-                    <div
-                      className="prose prose-sm max-w-none dark:prose-invert pointer-events-none select-none"
-                      dangerouslySetInnerHTML={{ __html: pageHtml }}
-                    />
-                  </div>
-                )}
-              </div>
-
-              {/* Sidebar - Detected Inputs */}
-              {pageHtml && (
-                <div className="w-72 border-l border-border p-4 bg-background overflow-auto">
-                  <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
-                    <Lock className="h-4 w-4 text-primary" />
-                    Algılanan Giriş Alanları ({detectedInputs.length})
-                  </h4>
-
-                  {detectedInputs.length > 0 ? (
-                    <div className="space-y-2">
-                      {detectedInputs.map((input, i) => (
-                        <div
-                          key={`input-${i}-${input.selector}`}
-                          className="p-2 rounded-lg bg-secondary/50 border border-border text-xs"
-                        >
-                          <div className="flex items-center justify-between mb-1">
-                            <Badge variant="outline" className="text-[10px]">
-                              {input.type}
-                            </Badge>
-                            <span className="text-muted-foreground">{input.name}</span>
-                          </div>
-                          <code className="text-[10px] text-muted-foreground block truncate">
-                            {input.selector}
-                          </code>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-center py-4 text-muted-foreground text-xs">
-                      <Info className="h-6 w-6 mx-auto mb-2 opacity-50" />
-                      Giriş alanı algılanamadı. Yine de devam edebilirsiniz.
-                    </div>
-                  )}
-
-                  <Button
-                    type="button"
-                    className="w-full mt-4"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      setStep("login");
-                    }}
-                  >
-                    Devam Et
-                    <ArrowRight className="h-4 w-4 ml-1" />
-                  </Button>
                 </div>
-              )}
-            </div>
-          )}
 
-          {/* Step: Login */}
-          {step === "login" && (
-            <div className="h-full p-6 overflow-auto">
-              <div className="max-w-md mx-auto space-y-6">
-                <div className="p-4 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                <Button
+                  type="button"
+                  className="w-full"
+                  onClick={() => setStep("login")}
+                >
+                  Devam Et
+                  <ArrowRight className="h-4 w-4 ml-1" />
+                </Button>
+              </div>
+            )}
+
+            {/* Step: Login */}
+            {step === "login" && (
+              <div className="p-4 space-y-4 overflow-auto flex-1">
+                <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
                   <div className="flex gap-2">
                     <Info className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
                     <div>
                       <p className="text-sm text-amber-400 font-medium">Güvenlik</p>
                       <p className="text-xs text-muted-foreground mt-1">
-                        Bilgileriniz şifreli olarak saklanır ve sadece otomatik giriş için kullanılır.
+                        Bilgileriniz şifreli olarak saklanır.
                       </p>
                     </div>
                   </div>
                 </div>
 
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Panel Adı</Label>
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Panel Adı</Label>
                     <Input
                       placeholder="Örn: Esbet Affiliate"
                       value={formData.name}
                       onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+                      className="h-8"
                     />
                   </div>
 
-                  <div className="space-y-2">
-                    <Label>E-posta / Kullanıcı Adı</Label>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">E-posta / Kullanıcı Adı</Label>
                     <Input
                       type="email"
                       placeholder="affiliate@example.com"
                       value={formData.email}
                       onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
+                      className="h-8"
                     />
                   </div>
 
-                  <div className="space-y-2">
-                    <Label>Şifre</Label>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Şifre</Label>
                     <div className="relative">
                       <Input
                         type={showPassword ? "text" : "password"}
                         placeholder="••••••••"
                         value={formData.password}
                         onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
-                        className="pr-10"
+                        className="pr-10 h-8"
                       />
                       <button
                         type="button"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setShowPassword(!showPassword);
-                        }}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                       >
                         {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                       </button>
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label>Kontrol Aralığı</Label>
-                    <div className="flex gap-2 flex-wrap">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Kontrol Aralığı</Label>
+                    <div className="flex gap-1 flex-wrap">
                       {[
                         { value: 15, label: "15sn" },
                         { value: 30, label: "30sn" },
                         { value: 60, label: "1dk" },
                         { value: 300, label: "5dk" },
-                        { value: 600, label: "10dk" },
                       ].map((opt) => (
                         <button
                           key={opt.value}
                           type="button"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setFormData(prev => ({ ...prev, checkInterval: opt.value }));
-                          }}
-                          className={`px-3 py-1.5 rounded-lg text-sm transition-all ${
+                          onClick={() => setFormData(prev => ({ ...prev, checkInterval: opt.value }))}
+                          className={`px-2 py-1 rounded text-xs transition-all ${
                             formData.checkInterval === opt.value
                               ? "bg-primary text-primary-foreground"
                               : "bg-secondary hover:bg-secondary/80"
@@ -629,13 +644,92 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
                   </div>
                 </div>
 
-                <div className="flex gap-2 pt-4">
+                <div className="flex gap-2 pt-2">
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      setStep("browse");
+                    size="sm"
+                    onClick={() => setStep("browse")}
+                  >
+                    <ArrowLeft className="h-4 w-4 mr-1" />
+                    Geri
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="flex-1"
+                    onClick={() => setStep("select")}
+                  >
+                    Element Seç
+                    <ArrowRight className="h-4 w-4 ml-1" />
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Step: Select Element */}
+            {step === "select" && (
+              <div className="p-4 space-y-4 overflow-auto flex-1">
+                <Button
+                  type="button"
+                  className={`w-full ${selectMode ? 'bg-amber-500 hover:bg-amber-600' : ''}`}
+                  onClick={() => setSelectMode(!selectMode)}
+                >
+                  <MousePointer2 className="h-4 w-4 mr-2" />
+                  {selectMode ? "Seçim Modu Aktif" : "Element Seçim Modu"}
+                </Button>
+
+                <div className="p-3 bg-secondary/50 rounded-lg text-xs text-muted-foreground">
+                  <p className="font-medium text-foreground mb-1">Nasıl Kullanılır:</p>
+                  <ol className="list-decimal list-inside space-y-1">
+                    <li>"Element Seçim Modu" butonuna tıklayın</li>
+                    <li>Sayfada izlemek istediğiniz değerin üzerine gidin</li>
+                    <li><strong>Ctrl + Sol Tık</strong> ile elementi seçin</li>
+                  </ol>
+                </div>
+
+                {selectedElement && (
+                  <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-lg space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Check className="h-4 w-4 text-green-400" />
+                      <span className="text-sm font-medium text-green-400">Element Seçildi</span>
+                    </div>
+                    <div className="space-y-1 text-xs">
+                      <p><span className="text-muted-foreground">Tag:</span> {selectedElement.tagName}</p>
+                      <p><span className="text-muted-foreground">Metin:</span> {selectedElement.text.substring(0, 50)}...</p>
+                      <p className="break-all"><span className="text-muted-foreground">Seçici:</span> <code className="bg-background px-1 rounded">{selectedElement.selector}</code></p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Manuel CSS Seçici</Label>
+                  <Input
+                    placeholder=".commission-value, #total-amount"
+                    value={formData.elementSelector}
+                    onChange={(e) => setFormData(prev => ({ ...prev, elementSelector: e.target.value }))}
+                    className="font-mono text-xs h-8"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Değer Etiketi</Label>
+                  <Input
+                    placeholder="Komisyon"
+                    value={formData.elementLabel}
+                    onChange={(e) => setFormData(prev => ({ ...prev, elementLabel: e.target.value }))}
+                    className="h-8"
+                  />
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setSelectMode(false);
+                      setStep("login");
                     }}
                   >
                     <ArrowLeft className="h-4 w-4 mr-1" />
@@ -643,169 +737,38 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
                   </Button>
                   <Button
                     type="button"
+                    size="sm"
                     className="flex-1"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      setStep("select");
+                    onClick={() => {
+                      setSelectMode(false);
+                      setStep("confirm");
                     }}
-                    disabled={!formData.email || !formData.password}
+                    disabled={!formData.elementSelector}
                   >
-                    Element Seçimine Git
+                    Onayla
                     <ArrowRight className="h-4 w-4 ml-1" />
                   </Button>
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Step: Select Element */}
-          {step === "select" && (
-            <div className="h-full flex">
-              {/* Page with selectable elements */}
-              <div className="flex-1 bg-white overflow-auto relative">
-                <div className="sticky top-0 left-0 right-0 z-10 p-2 bg-primary text-primary-foreground text-sm text-center">
-                  <Crosshair className="h-4 w-4 inline mr-2" />
-                  Sağ panelden izlemek istediğiniz elementi seçin veya manuel CSS seçici girin
-                </div>
-
-                {pageHtml && (
-                  <div
-                    className="p-4 prose prose-sm max-w-none dark:prose-invert pointer-events-none select-none opacity-70"
-                    dangerouslySetInnerHTML={{ __html: pageHtml }}
-                  />
-                )}
-              </div>
-
-              {/* Element list */}
-              <div className="w-80 border-l border-border bg-background flex flex-col">
-                <div className="p-4 border-b border-border">
-                  <h4 className="text-sm font-medium flex items-center gap-2">
-                    <MousePointer2 className="h-4 w-4 text-primary" />
-                    Algılanan Elementler ({detectedElements.length})
-                  </h4>
+            {/* Step: Confirm */}
+            {step === "confirm" && (
+              <div className="p-4 space-y-4 overflow-auto flex-1">
+                <div className="text-center py-4">
+                  <div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center mx-auto mb-3">
+                    <Check className="h-6 w-6 text-green-500" />
+                  </div>
+                  <h3 className="text-lg font-semibold">Panel Hazır</h3>
                   <p className="text-xs text-muted-foreground mt-1">
-                    İzlemek istediğiniz değeri içeren elementi seçin
+                    Bilgileri kontrol edin ve kaydedin
                   </p>
                 </div>
 
-                <ScrollArea className="flex-1 p-4">
-                  <div className="space-y-2">
-                    {detectedElements.slice(0, 30).map((el, i) => (
-                      <button
-                        key={`el-${i}-${el.selector}`}
-                        type="button"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          handleSelectElement(el);
-                        }}
-                        onMouseEnter={() => setHoveredElement(el.selector)}
-                        onMouseLeave={() => setHoveredElement(null)}
-                        className={`w-full p-3 rounded-lg border text-left transition-all ${
-                          formData.elementSelector === el.selector
-                            ? "bg-primary/10 border-primary"
-                            : hoveredElement === el.selector
-                              ? "bg-secondary border-primary/50"
-                              : "bg-secondary/50 border-border hover:bg-secondary"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between mb-1">
-                          <Badge variant="outline" className="text-[10px]">
-                            {el.tagName}
-                          </Badge>
-                          {formData.elementSelector === el.selector && (
-                            <Check className="h-4 w-4 text-primary" />
-                          )}
-                        </div>
-                        <p className="text-sm font-medium truncate">{el.text}</p>
-                        <code className="text-[10px] text-muted-foreground block truncate mt-1">
-                          {el.selector}
-                        </code>
-                      </button>
-                    ))}
-                  </div>
-                </ScrollArea>
-
-                {/* Manual selector input */}
-                <div className="p-4 border-t border-border space-y-3">
-                  <div className="space-y-2">
-                    <Label className="text-xs">Manuel CSS Seçici</Label>
-                    <Input
-                      placeholder=".commission-value"
-                      value={formData.elementSelector}
-                      onChange={(e) => setFormData(prev => ({ ...prev, elementSelector: e.target.value }))}
-                      className="font-mono text-sm h-8"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="text-xs">Değer Etiketi</Label>
-                    <Input
-                      placeholder="Komisyon"
-                      value={formData.elementLabel}
-                      onChange={(e) => setFormData(prev => ({ ...prev, elementLabel: e.target.value }))}
-                      className="h-8"
-                    />
-                  </div>
-
-                  <div className="flex gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        setStep("login");
-                      }}
-                    >
-                      <ArrowLeft className="h-4 w-4 mr-1" />
-                      Geri
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="flex-1"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        setStep("confirm");
-                      }}
-                      disabled={!formData.elementSelector}
-                    >
-                      Onayla
-                      <ArrowRight className="h-4 w-4 ml-1" />
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Step: Confirm */}
-          {step === "confirm" && (
-            <div className="h-full p-6 overflow-auto">
-              <div className="max-w-lg mx-auto space-y-6">
-                <div className="text-center">
-                  <div className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center mx-auto mb-4">
-                    <Check className="h-8 w-8 text-green-500" />
-                  </div>
-                  <h3 className="text-xl font-semibold">Panel Hazır</h3>
-                  <p className="text-muted-foreground mt-1">
-                    Aşağıdaki bilgileri kontrol edin ve kaydedin
-                  </p>
-                </div>
-
-                <div className="space-y-3 p-4 rounded-lg bg-secondary/50 border border-border">
+                <div className="space-y-2 p-3 rounded-lg bg-secondary/50 border border-border text-xs">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Panel Adı</span>
                     <span className="font-medium">{formData.name}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Giriş URL</span>
-                    <span className="font-mono text-sm truncate max-w-[200px]">{formData.loginUrl}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Hedef URL</span>
-                    <span className="font-mono text-sm truncate max-w-[200px]">{formData.targetUrl || currentUrl}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">E-posta</span>
@@ -813,7 +776,7 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Element</span>
-                    <code className="text-sm bg-background px-2 py-0.5 rounded">{formData.elementSelector}</code>
+                    <code className="bg-background px-1 rounded text-[10px]">{formData.elementSelector}</code>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Kontrol</span>
@@ -825,21 +788,17 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      setStep("select");
-                    }}
+                    size="sm"
+                    onClick={() => setStep("select")}
                   >
                     <ArrowLeft className="h-4 w-4 mr-1" />
                     Geri
                   </Button>
                   <Button
                     type="button"
+                    size="sm"
                     className="flex-1"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      handleSubmit();
-                    }}
+                    onClick={handleSubmit}
                     disabled={loading}
                   >
                     {loading ? (
@@ -850,14 +809,24 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
                     ) : (
                       <>
                         <Save className="h-4 w-4 mr-2" />
-                        {editPanel ? "Güncelle" : "Paneli Kaydet"}
+                        {editPanel ? "Güncelle" : "Kaydet"}
                       </>
                     )}
                   </Button>
                 </div>
               </div>
-            </div>
-          )}
+            )}
+
+            {/* Empty state for right panel */}
+            {step === "browse" && !pageHtml && (
+              <div className="p-4 flex-1 flex items-center justify-center">
+                <div className="text-center text-muted-foreground">
+                  <Globe className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                  <p className="text-sm">Önce bir URL girin</p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </DialogContent>
     </Dialog>
