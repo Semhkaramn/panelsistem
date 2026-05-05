@@ -58,13 +58,7 @@ export function Dashboard() {
     fetchSettings();
   }, [fetchPanels, fetchSettings]);
 
-  // Auto refresh every 30 seconds
-  useEffect(() => {
-    const interval = setInterval(() => {
-      fetchPanels();
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [fetchPanels]);
+  // Otomatik yenileme kapatıldı - kullanıcı manuel yenileyebilir
 
   const activePanels = panels.filter((p) => p.status === "active").length;
   const errorPanels = panels.filter((p) => p.status === "error").length;
