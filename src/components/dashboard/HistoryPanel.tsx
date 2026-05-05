@@ -37,8 +37,7 @@ export function HistoryPanel() {
     };
 
     fetchHistory();
-    const interval = setInterval(fetchHistory, 30000);
-    return () => clearInterval(interval);
+    // Otomatik yenileme kapatıldı - kullanıcı manuel yenileyebilir
   }, []);
 
   const parseValue = (value: string | null): number | null => {
