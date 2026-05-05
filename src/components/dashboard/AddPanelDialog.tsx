@@ -276,10 +276,12 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
     }
   }, [formData.name]);
 
-  // Handle URL submit
+  // Handle URL submit - sayfa yenileme engellendi
   const handleUrlSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     if (url) {
       let finalUrl = url;
       if (!url.startsWith("http")) {
@@ -287,6 +289,16 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
         setUrl(finalUrl);
       }
       loadPage(finalUrl);
+    }
+    return false;
+  };
+
+  // Enter tuşu ile URL'ye git
+  const handleUrlKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      handleUrlSubmit(e as unknown as React.FormEvent);
     }
   };
 
@@ -353,7 +365,9 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
               <div key={s.id} className="flex items-center">
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
                     if (i <= currentStepIndex || pageHtml) setStep(s.id as Step);
                   }}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
@@ -375,9 +389,9 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
           </div>
         </DialogHeader>
 
-        {/* Browser Bar */}
+        {/* Browser Bar - Form yerine div kullanıldı, sayfa yenileme yok */}
         <div className="px-4 py-2 border-b border-border/50 bg-secondary/30">
-          <form onSubmit={handleUrlSubmit} className="flex items-center gap-2">
+          <div className="flex items-center gap-2">
             <Button
               type="button"
               variant="ghost"
@@ -395,11 +409,21 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
                 placeholder="https://partner.example.com/login adresini yazın..."
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
+                onKeyDown={handleUrlKeyDown}
                 className="pl-9 pr-4 h-9 bg-background"
+                autoComplete="off"
               />
             </div>
 
-            <Button type="submit" disabled={pageLoading || !url} className="h-9 px-4">
+            <Button
+              type="button"
+              disabled={pageLoading || !url}
+              className="h-9 px-4"
+              onClick={(e) => {
+                e.preventDefault();
+                handleUrlSubmit(e as unknown as React.FormEvent);
+              }}
+            >
               {pageLoading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
@@ -409,7 +433,7 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
                 </>
               )}
             </Button>
-          </form>
+          </div>
         </div>
 
         {/* Main Content */}
@@ -451,42 +475,60 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
                 )}
 
                 {pageHtml && !pageLoading && (
-                  <div
-                    className="p-4 prose prose-sm max-w-none dark:prose-invert"
-                    dangerouslySetInnerHTML={{ __html: pageHtml }}
-                  />
+                  <div className="p-4">
+                    <div className="mb-3 p-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-400 text-xs flex items-center gap-2">
+                      <Info className="h-4 w-4" />
+                      Sayfa yüklendi. Sağ panelden giriş alanlarını seçin veya "Devam Et" butonuna tıklayın.
+                    </div>
+                    <div
+                      className="prose prose-sm max-w-none dark:prose-invert pointer-events-none select-none"
+                      dangerouslySetInnerHTML={{ __html: pageHtml }}
+                    />
+                  </div>
                 )}
               </div>
 
               {/* Sidebar - Detected Inputs */}
-              {pageHtml && detectedInputs.length > 0 && (
+              {pageHtml && (
                 <div className="w-72 border-l border-border p-4 bg-background overflow-auto">
                   <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
                     <Lock className="h-4 w-4 text-primary" />
-                    Algılanan Giriş Alanları
+                    Algılanan Giriş Alanları ({detectedInputs.length})
                   </h4>
-                  <div className="space-y-2">
-                    {detectedInputs.map((input, i) => (
-                      <div
-                        key={i}
-                        className="p-2 rounded-lg bg-secondary/50 border border-border text-xs"
-                      >
-                        <div className="flex items-center justify-between mb-1">
-                          <Badge variant="outline" className="text-[10px]">
-                            {input.type}
-                          </Badge>
-                          <span className="text-muted-foreground">{input.name}</span>
+
+                  {detectedInputs.length > 0 ? (
+                    <div className="space-y-2">
+                      {detectedInputs.map((input, i) => (
+                        <div
+                          key={`input-${i}-${input.selector}`}
+                          className="p-2 rounded-lg bg-secondary/50 border border-border text-xs"
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <Badge variant="outline" className="text-[10px]">
+                              {input.type}
+                            </Badge>
+                            <span className="text-muted-foreground">{input.name}</span>
+                          </div>
+                          <code className="text-[10px] text-muted-foreground block truncate">
+                            {input.selector}
+                          </code>
                         </div>
-                        <code className="text-[10px] text-muted-foreground block truncate">
-                          {input.selector}
-                        </code>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-4 text-muted-foreground text-xs">
+                      <Info className="h-6 w-6 mx-auto mb-2 opacity-50" />
+                      Giriş alanı algılanamadı. Yine de devam edebilirsiniz.
+                    </div>
+                  )}
 
                   <Button
+                    type="button"
                     className="w-full mt-4"
-                    onClick={() => setStep("login")}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setStep("login");
+                    }}
                   >
                     Devam Et
                     <ArrowRight className="h-4 w-4 ml-1" />
@@ -544,7 +586,11 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
                       />
                       <button
                         type="button"
-                        onClick={() => setShowPassword(!showPassword)}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setShowPassword(!showPassword);
+                        }}
                         className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                       >
                         {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -565,7 +611,11 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
                         <button
                           key={opt.value}
                           type="button"
-                          onClick={() => setFormData(prev => ({ ...prev, checkInterval: opt.value }))}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setFormData(prev => ({ ...prev, checkInterval: opt.value }));
+                          }}
                           className={`px-3 py-1.5 rounded-lg text-sm transition-all ${
                             formData.checkInterval === opt.value
                               ? "bg-primary text-primary-foreground"
@@ -580,13 +630,24 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
                 </div>
 
                 <div className="flex gap-2 pt-4">
-                  <Button variant="outline" onClick={() => setStep("browse")}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setStep("browse");
+                    }}
+                  >
                     <ArrowLeft className="h-4 w-4 mr-1" />
                     Geri
                   </Button>
                   <Button
+                    type="button"
                     className="flex-1"
-                    onClick={() => setStep("select")}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setStep("select");
+                    }}
                     disabled={!formData.email || !formData.password}
                   >
                     Element Seçimine Git
@@ -602,16 +663,14 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
             <div className="h-full flex">
               {/* Page with selectable elements */}
               <div className="flex-1 bg-white overflow-auto relative">
-                {selectMode && (
-                  <div className="absolute top-2 left-2 right-2 z-10 p-2 rounded-lg bg-primary text-primary-foreground text-sm text-center">
-                    <Crosshair className="h-4 w-4 inline mr-2" />
-                    Aşağıdaki listeden izlemek istediğiniz elementi seçin
-                  </div>
-                )}
+                <div className="sticky top-0 left-0 right-0 z-10 p-2 bg-primary text-primary-foreground text-sm text-center">
+                  <Crosshair className="h-4 w-4 inline mr-2" />
+                  Sağ panelden izlemek istediğiniz elementi seçin veya manuel CSS seçici girin
+                </div>
 
                 {pageHtml && (
                   <div
-                    className="p-4 prose prose-sm max-w-none dark:prose-invert"
+                    className="p-4 prose prose-sm max-w-none dark:prose-invert pointer-events-none select-none opacity-70"
                     dangerouslySetInnerHTML={{ __html: pageHtml }}
                   />
                 )}
@@ -633,9 +692,13 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
                   <div className="space-y-2">
                     {detectedElements.slice(0, 30).map((el, i) => (
                       <button
-                        key={i}
+                        key={`el-${i}-${el.selector}`}
                         type="button"
-                        onClick={() => handleSelectElement(el)}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleSelectElement(el);
+                        }}
                         onMouseEnter={() => setHoveredElement(el.selector)}
                         onMouseLeave={() => setHoveredElement(null)}
                         className={`w-full p-3 rounded-lg border text-left transition-all ${
@@ -686,14 +749,26 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
                   </div>
 
                   <div className="flex gap-2">
-                    <Button variant="outline" size="sm" onClick={() => setStep("login")}>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setStep("login");
+                      }}
+                    >
                       <ArrowLeft className="h-4 w-4 mr-1" />
                       Geri
                     </Button>
                     <Button
+                      type="button"
                       size="sm"
                       className="flex-1"
-                      onClick={() => setStep("confirm")}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setStep("confirm");
+                      }}
                       disabled={!formData.elementSelector}
                     >
                       Onayla
@@ -747,13 +822,24 @@ export function AddPanelDialog({ open, onOpenChange, editPanel }: AddPanelDialog
                 </div>
 
                 <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => setStep("select")}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setStep("select");
+                    }}
+                  >
                     <ArrowLeft className="h-4 w-4 mr-1" />
                     Geri
                   </Button>
                   <Button
+                    type="button"
                     className="flex-1"
-                    onClick={handleSubmit}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handleSubmit();
+                    }}
                     disabled={loading}
                   >
                     {loading ? (
