@@ -375,9 +375,227 @@ export async function POST(request: Request) {
           return NextResponse.json({ error: "No page open" }, { status: 400 });
         }
 
-        const { x, y } = body;
+        const { x, y, waitForNav } = body;
+        const previousUrl = currentPage.url();
+
         await currentPage.mouse.click(x, y);
-        await delay(1000);
+
+        // Wait for potential navigation
+        if (waitForNav) {
+          try {
+            await currentPage.waitForNavigation({ timeout: 5000, waitUntil: "networkidle2" });
+          } catch {
+            // Navigation might not happen, that's ok
+          }
+        }
+
+        await delay(500);
+
+        const screenshot = await currentPage.screenshot({
+          encoding: "base64",
+          fullPage: false,
+        });
+
+        const newUrl = currentPage.url();
+        const navigated = newUrl !== previousUrl;
+
+        return NextResponse.json({
+          success: true,
+          screenshot: `data:image/png;base64,${screenshot}`,
+          currentUrl: newUrl,
+          navigated,
+        });
+      }
+
+      case "scroll": {
+        if (!currentPage) {
+          return NextResponse.json({ error: "No page open" }, { status: 400 });
+        }
+
+        const { direction, amount } = body;
+        const scrollAmount = amount || 300;
+
+        await currentPage.evaluate((dir: string, amt: number) => {
+          if (dir === "down") {
+            window.scrollBy(0, amt);
+          } else if (dir === "up") {
+            window.scrollBy(0, -amt);
+          } else if (dir === "left") {
+            window.scrollBy(-amt, 0);
+          } else if (dir === "right") {
+            window.scrollBy(amt, 0);
+          }
+        }, direction, scrollAmount);
+
+        await delay(300);
+
+        const screenshot = await currentPage.screenshot({
+          encoding: "base64",
+          fullPage: false,
+        });
+
+        const scrollPosition = await currentPage.evaluate(() => ({
+          x: window.scrollX,
+          y: window.scrollY,
+          maxX: document.documentElement.scrollWidth - window.innerWidth,
+          maxY: document.documentElement.scrollHeight - window.innerHeight,
+        }));
+
+        return NextResponse.json({
+          success: true,
+          screenshot: `data:image/png;base64,${screenshot}`,
+          scrollPosition,
+        });
+      }
+
+      case "type": {
+        if (!currentPage) {
+          return NextResponse.json({ error: "No page open" }, { status: 400 });
+        }
+
+        const { text } = body;
+        await currentPage.keyboard.type(text, { delay: 50 });
+        await delay(200);
+
+        const screenshot = await currentPage.screenshot({
+          encoding: "base64",
+          fullPage: false,
+        });
+
+        return NextResponse.json({
+          success: true,
+          screenshot: `data:image/png;base64,${screenshot}`,
+        });
+      }
+
+      case "pressKey": {
+        if (!currentPage) {
+          return NextResponse.json({ error: "No page open" }, { status: 400 });
+        }
+
+        const { key } = body;
+        await currentPage.keyboard.press(key);
+        await delay(300);
+
+        const screenshot = await currentPage.screenshot({
+          encoding: "base64",
+          fullPage: false,
+        });
+
+        return NextResponse.json({
+          success: true,
+          screenshot: `data:image/png;base64,${screenshot}`,
+          currentUrl: currentPage.url(),
+        });
+      }
+
+      case "getClickableElements": {
+        if (!currentPage) {
+          return NextResponse.json({ error: "No page open" }, { status: 400 });
+        }
+
+        // Get all clickable elements (links, buttons, inputs)
+        const elements = await currentPage.evaluate(() => {
+          const clickable: any[] = [];
+          const selectors = 'a, button, input[type="submit"], input[type="button"], [onclick], [role="button"], .btn';
+
+          document.querySelectorAll(selectors).forEach((el, index) => {
+            const rect = el.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0 && rect.top < window.innerHeight + 100) {
+              const href = (el as HTMLAnchorElement).href || null;
+              const text = el.textContent?.trim().substring(0, 50) || el.getAttribute('aria-label') || '';
+
+              clickable.push({
+                index,
+                tagName: el.tagName.toLowerCase(),
+                text,
+                href,
+                rect: {
+                  x: rect.x + rect.width / 2,
+                  y: rect.y + rect.height / 2,
+                  width: rect.width,
+                  height: rect.height,
+                },
+              });
+            }
+          });
+
+          return clickable;
+        });
+
+        return NextResponse.json({
+          success: true,
+          elements,
+        });
+      }
+
+      case "hover": {
+        if (!currentPage) {
+          return NextResponse.json({ error: "No page open" }, { status: 400 });
+        }
+
+        const { x: hoverX, y: hoverY } = body;
+        await currentPage.mouse.move(hoverX, hoverY);
+        await delay(300);
+
+        const screenshot = await currentPage.screenshot({
+          encoding: "base64",
+          fullPage: false,
+        });
+
+        return NextResponse.json({
+          success: true,
+          screenshot: `data:image/png;base64,${screenshot}`,
+        });
+      }
+
+      case "goBack": {
+        if (!currentPage) {
+          return NextResponse.json({ error: "No page open" }, { status: 400 });
+        }
+
+        await currentPage.goBack({ waitUntil: "networkidle2" });
+        await delay(500);
+
+        const screenshot = await currentPage.screenshot({
+          encoding: "base64",
+          fullPage: false,
+        });
+
+        return NextResponse.json({
+          success: true,
+          screenshot: `data:image/png;base64,${screenshot}`,
+          currentUrl: currentPage.url(),
+        });
+      }
+
+      case "goForward": {
+        if (!currentPage) {
+          return NextResponse.json({ error: "No page open" }, { status: 400 });
+        }
+
+        await currentPage.goForward({ waitUntil: "networkidle2" });
+        await delay(500);
+
+        const screenshot = await currentPage.screenshot({
+          encoding: "base64",
+          fullPage: false,
+        });
+
+        return NextResponse.json({
+          success: true,
+          screenshot: `data:image/png;base64,${screenshot}`,
+          currentUrl: currentPage.url(),
+        });
+      }
+
+      case "refresh": {
+        if (!currentPage) {
+          return NextResponse.json({ error: "No page open" }, { status: 400 });
+        }
+
+        await currentPage.reload({ waitUntil: "networkidle2" });
+        await delay(500);
 
         const screenshot = await currentPage.screenshot({
           encoding: "base64",
