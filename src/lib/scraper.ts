@@ -106,24 +106,10 @@ async function getBrowser(): Promise<Browser> {
         },
       });
     } catch (channelError) {
-      // Try chromium channel
-      console.log("🔍 Sistem Chromium aranıyor (channel: chromium)...");
-      try {
-        browserInstance = await puppeteer.launch({
-          channel: "chromium",
-          headless: true,
-          args: launchArgs,
-          defaultViewport: {
-            width: 1920,
-            height: 1080,
-          },
-        });
-      } catch (chromiumError) {
-        throw new Error(
-          "Chrome/Chromium bulunamadı. Lütfen Chrome yükleyin veya CHROME_PATH environment variable ayarlayın. " +
-          "Alternatif olarak 'puppeteer' paketini kullanabilirsiniz (puppeteer-core yerine)."
-        );
-      }
+      throw new Error(
+        "Chrome/Chromium bulunamadı. Lütfen Chrome yükleyin veya CHROME_PATH environment variable ayarlayın. " +
+        "Alternatif olarak 'puppeteer' paketini kullanabilirsiniz (puppeteer-core yerine)."
+      );
     }
   }
 
