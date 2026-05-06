@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import chromium from "@sparticuz/chromium";
-import * as fs from "fs";
 
 // Browser instance (reusable)
 let browserInstance: Browser | null = null;
@@ -10,50 +9,10 @@ let currentPage: Page | null = null;
 // Session cookies storage
 const sessionCookies: Map<string, any[]> = new Map();
 
-async function getExecutablePath(): Promise<string | null> {
-  // Check environment variable first
-  if (process.env.CHROME_PATH) {
-    return process.env.CHROME_PATH;
-  }
-
-  // Try @sparticuz/chromium (for serverless environments)
-  try {
-    const chromiumPath = await chromium.executablePath();
-    if (chromiumPath && fs.existsSync(chromiumPath)) {
-      return chromiumPath;
-    }
-  } catch (e) {
-    console.log("@sparticuz/chromium not available, trying fallback paths...");
-  }
-
-  // Fallback paths for different systems
-  const possiblePaths = [
-    // Linux
-    "/usr/bin/google-chrome-stable",
-    "/usr/bin/google-chrome",
-    "/usr/bin/chromium-browser",
-    "/usr/bin/chromium",
-    "/snap/bin/chromium",
-    // Windows
-    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-    // macOS
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-  ];
-
-  for (const path of possiblePaths) {
-    try {
-      if (fs.existsSync(path)) {
-        return path;
-      }
-    } catch (e) {
-      continue;
-    }
-  }
-
-  return null;
-}
+// Check if running in serverless environment
+const isServerless = !!process.env.AWS_LAMBDA_FUNCTION_NAME ||
+                     !!process.env.NETLIFY ||
+                     !!process.env.VERCEL;
 
 async function getBrowser(): Promise<Browser> {
   if (browserInstance && browserInstance.connected) {
@@ -61,8 +20,7 @@ async function getBrowser(): Promise<Browser> {
   }
 
   console.log("🌐 Tarayıcı başlatılıyor...");
-
-  const executablePath = await getExecutablePath();
+  console.log(`📍 Ortam: ${isServerless ? 'Serverless' : 'Local'}`);
 
   // Common launch args
   const launchArgs = [
@@ -71,46 +29,75 @@ async function getBrowser(): Promise<Browser> {
     "--disable-dev-shm-usage",
     "--disable-gpu",
     "--disable-blink-features=AutomationControlled",
-    "--window-size=1920,1080",
+    "--single-process",
+    "--no-zygote",
     "--disable-web-security",
     "--disable-features=IsolateOrigins,site-per-process",
   ];
 
-  // If we have an executable path, use it
-  if (executablePath) {
-    console.log(`✅ Chrome bulundu: ${executablePath}`);
-    browserInstance = await puppeteer.launch({
-      executablePath,
-      headless: true,
-      args: launchArgs,
-      defaultViewport: {
-        width: 1920,
-        height: 1080,
-      },
-    });
-  } else {
-    // Try using channel as fallback (finds system Chrome)
-    console.log("🔍 Sistem Chrome aranıyor (channel: chrome)...");
-    try {
+  try {
+    if (isServerless || process.env.USE_CHROMIUM === "true") {
+      // Serverless environment - use @sparticuz/chromium
+      console.log("🔧 @sparticuz/chromium kullanılıyor...");
+
+      // Configure chromium for serverless
+      chromium.setHeadlessMode = true;
+      chromium.setGraphicsMode = false;
+
+      const executablePath = await chromium.executablePath();
+      console.log(`✅ Chromium yolu: ${executablePath}`);
+
       browserInstance = await puppeteer.launch({
-        channel: "chrome",
-        headless: true,
-        args: launchArgs,
+        executablePath,
+        headless: chromium.headless,
+        args: [...chromium.args, ...launchArgs],
         defaultViewport: {
           width: 1920,
           height: 1080,
         },
       });
-    } catch (channelError) {
-      throw new Error(
-        "Chrome/Chromium bulunamadı. Lütfen Chrome yükleyin veya CHROME_PATH environment variable ayarlayın. " +
-        "Alternatif olarak 'puppeteer' paketini kullanabilirsiniz (puppeteer-core yerine)."
-      );
-    }
-  }
+    } else {
+      // Local environment - try to find system Chrome
+      console.log("🔧 Sistem Chrome aranıyor...");
 
-  console.log("✅ Tarayıcı başlatıldı");
-  return browserInstance;
+      // Check for CHROME_PATH environment variable
+      if (process.env.CHROME_PATH) {
+        console.log(`✅ CHROME_PATH: ${process.env.CHROME_PATH}`);
+        browserInstance = await puppeteer.launch({
+          executablePath: process.env.CHROME_PATH,
+          headless: true,
+          args: launchArgs,
+          defaultViewport: {
+            width: 1920,
+            height: 1080,
+          },
+        });
+      } else {
+        // Try channel approach for system Chrome
+        console.log("🔍 channel: chrome deneniyor...");
+        browserInstance = await puppeteer.launch({
+          channel: "chrome",
+          headless: true,
+          args: launchArgs,
+          defaultViewport: {
+            width: 1920,
+            height: 1080,
+          },
+        });
+      }
+    }
+
+    console.log("✅ Tarayıcı başlatıldı");
+    return browserInstance;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`❌ Tarayıcı başlatma hatası: ${errorMessage}`);
+
+    throw new Error(
+      `Chrome/Chromium başlatılamadı: ${errorMessage}. ` +
+      "Serverless ortam için USE_CHROMIUM=true ayarlayın veya CHROME_PATH belirtin."
+    );
+  }
 }
 
 async function delay(ms: number): Promise<void> {
