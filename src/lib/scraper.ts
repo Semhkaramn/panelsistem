@@ -44,16 +44,12 @@ async function getBrowser(): Promise<Browser> {
       // Serverless environment - use @sparticuz/chromium
       console.log("🔧 @sparticuz/chromium kullanılıyor...");
 
-      // Configure chromium for serverless
-      chromium.setHeadlessMode = true;
-      chromium.setGraphicsMode = false;
-
       const executablePath = await chromium.executablePath();
       console.log(`✅ Chromium yolu: ${executablePath}`);
 
       browserInstance = await puppeteer.launch({
         executablePath,
-        headless: chromium.headless,
+        headless: true,
         args: [...chromium.args, ...launchArgs],
         defaultViewport: {
           width: 1920,
