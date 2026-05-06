@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,7 +10,6 @@ import {
   ArrowLeft,
   ArrowRight,
   RotateCcw,
-  Home,
   Loader2,
   MousePointer2,
   Eye,
@@ -21,8 +20,11 @@ import {
   Crosshair,
   LogIn,
   ChevronLeft,
-  Settings,
-  Zap,
+  ChevronUp,
+  ChevronDown,
+  Move,
+  Hand,
+  Target,
 } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import Link from "next/link";
@@ -39,6 +41,15 @@ interface SelectedElement {
   tagName: string;
 }
 
+interface ScrollPosition {
+  x: number;
+  y: number;
+  maxX: number;
+  maxY: number;
+}
+
+type BrowserMode = "browse" | "select";
+
 export default function BrowserPage() {
   const [url, setUrl] = useState("");
   const [currentUrl, setCurrentUrl] = useState("");
@@ -46,8 +57,10 @@ export default function BrowserPage() {
   const [screenshot, setScreenshot] = useState<string | null>(null);
   const [pageInfo, setPageInfo] = useState<PageInfo | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [history, setHistory] = useState<string[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [scrollPosition, setScrollPosition] = useState<ScrollPosition | null>(null);
+
+  // Mode: browse (normal navigation) or select (element picking)
+  const [mode, setMode] = useState<BrowserMode>("browse");
 
   // Login state
   const [showLoginPanel, setShowLoginPanel] = useState(false);
@@ -58,13 +71,23 @@ export default function BrowserPage() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   // Element selection
-  const [selectMode, setSelectMode] = useState(false);
   const [selectedElement, setSelectedElement] = useState<SelectedElement | null>(null);
   const [panelName, setPanelName] = useState("");
   const [elementLabel, setElementLabel] = useState("Komisyon");
   const [checkInterval, setCheckInterval] = useState(30);
 
   const imageRef = useRef<HTMLImageElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // API call helper
+  const browserAction = async (action: string, data: any = {}) => {
+    const response = await fetch("/api/browser", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, sessionId, ...data }),
+    });
+    return response.json();
+  };
 
   // Navigate to URL
   const navigateTo = useCallback(async (targetUrl: string) => {
@@ -79,27 +102,12 @@ export default function BrowserPage() {
     setUrl(finalUrl);
 
     try {
-      const response = await fetch("/api/browser", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "navigate",
-          url: finalUrl,
-          sessionId,
-        }),
-      });
-
-      const data = await response.json();
+      const data = await browserAction("navigate", { url: finalUrl });
 
       if (data.success) {
         setScreenshot(data.screenshot);
         setPageInfo(data.pageInfo);
         setCurrentUrl(data.currentUrl);
-
-        // Update history
-        const newHistory = [...history.slice(0, historyIndex + 1), finalUrl];
-        setHistory(newHistory);
-        setHistoryIndex(newHistory.length - 1);
 
         // Auto-detect panel name
         try {
@@ -128,7 +136,7 @@ export default function BrowserPage() {
     } finally {
       setLoading(false);
     }
-  }, [sessionId, history, historyIndex, panelName]);
+  }, [sessionId, panelName]);
 
   // Handle URL submit
   const handleSubmit = (e: React.FormEvent) => {
@@ -136,30 +144,78 @@ export default function BrowserPage() {
     navigateTo(url);
   };
 
-  // Go back
-  const goBack = () => {
-    if (historyIndex > 0) {
-      const newIndex = historyIndex - 1;
-      setHistoryIndex(newIndex);
-      navigateTo(history[newIndex]);
+  // Navigation actions
+  const goBack = async () => {
+    setLoading(true);
+    try {
+      const data = await browserAction("goBack");
+      if (data.success) {
+        setScreenshot(data.screenshot);
+        setCurrentUrl(data.currentUrl);
+        setUrl(data.currentUrl);
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
-  // Go forward
-  const goForward = () => {
-    if (historyIndex < history.length - 1) {
-      const newIndex = historyIndex + 1;
-      setHistoryIndex(newIndex);
-      navigateTo(history[newIndex]);
+  const goForward = async () => {
+    setLoading(true);
+    try {
+      const data = await browserAction("goForward");
+      if (data.success) {
+        setScreenshot(data.screenshot);
+        setCurrentUrl(data.currentUrl);
+        setUrl(data.currentUrl);
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
-  // Refresh
-  const refresh = () => {
-    if (currentUrl) {
-      navigateTo(currentUrl);
+  const refresh = async () => {
+    setLoading(true);
+    try {
+      const data = await browserAction("refresh");
+      if (data.success) {
+        setScreenshot(data.screenshot);
+        setCurrentUrl(data.currentUrl);
+      }
+    } finally {
+      setLoading(false);
     }
   };
+
+  // Scroll actions
+  const scroll = async (direction: "up" | "down", amount = 300) => {
+    try {
+      const data = await browserAction("scroll", { direction, amount });
+      if (data.success) {
+        setScreenshot(data.screenshot);
+        setScrollPosition(data.scrollPosition);
+      }
+    } catch (error) {
+      console.error("Scroll error:", error);
+    }
+  };
+
+  // Handle keyboard for scrolling
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!screenshot) return;
+
+      if (e.key === "ArrowDown" || e.key === "PageDown") {
+        e.preventDefault();
+        scroll("down", e.key === "PageDown" ? 600 : 300);
+      } else if (e.key === "ArrowUp" || e.key === "PageUp") {
+        e.preventDefault();
+        scroll("up", e.key === "PageUp" ? 600 : 300);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [screenshot]);
 
   // Perform login
   const handleLogin = async () => {
@@ -171,17 +227,9 @@ export default function BrowserPage() {
     setLoginLoading(true);
 
     try {
-      const response = await fetch("/api/browser", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "login",
-          credentials: { email, password },
-          sessionId,
-        }),
+      const data = await browserAction("login", {
+        credentials: { email, password },
       });
-
-      const data = await response.json();
 
       if (data.screenshot) {
         setScreenshot(data.screenshot);
@@ -193,13 +241,14 @@ export default function BrowserPage() {
 
       if (data.currentUrl) {
         setCurrentUrl(data.currentUrl);
+        setUrl(data.currentUrl);
       }
 
       if (data.success) {
         setIsLoggedIn(true);
         setShowLoginPanel(false);
         toast.success("Giriş başarılı!", {
-          description: "Artık element seçebilirsiniz",
+          description: "Artık sayfada gezinebilir veya element seçebilirsiniz",
         });
       } else {
         toast.warning(data.message || "Giriş yapılamadı", {
@@ -213,9 +262,9 @@ export default function BrowserPage() {
     }
   };
 
-  // Handle image click for element selection
+  // Handle image click
   const handleImageClick = async (e: React.MouseEvent<HTMLImageElement>) => {
-    if (!selectMode || !imageRef.current) return;
+    if (!imageRef.current || loading) return;
 
     const rect = imageRef.current.getBoundingClientRect();
     const scaleX = 1920 / rect.width;
@@ -224,69 +273,94 @@ export default function BrowserPage() {
     const x = (e.clientX - rect.left) * scaleX;
     const y = (e.clientY - rect.top) * scaleY;
 
-    setLoading(true);
+    if (mode === "browse") {
+      // Normal browsing mode - click and potentially navigate
+      setLoading(true);
+      try {
+        const data = await browserAction("click", { x, y, waitForNav: true });
 
-    try {
-      // Click on the page
-      const clickResponse = await fetch("/api/browser", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "click",
-          x,
-          y,
-          sessionId,
-        }),
-      });
-
-      const clickData = await clickResponse.json();
-
-      if (clickData.screenshot) {
-        setScreenshot(clickData.screenshot);
+        if (data.success) {
+          setScreenshot(data.screenshot);
+          if (data.currentUrl) {
+            setCurrentUrl(data.currentUrl);
+            setUrl(data.currentUrl);
+          }
+          if (data.navigated) {
+            toast.success("Sayfa değişti", {
+              description: data.currentUrl?.substring(0, 50) + "..."
+            });
+          }
+        }
+      } catch (error) {
+        console.error("Click error:", error);
+      } finally {
+        setLoading(false);
       }
+    } else {
+      // Element selection mode
+      setLoading(true);
+      try {
+        // First click to potentially highlight/focus
+        await browserAction("click", { x, y, waitForNav: false });
 
-      // Get element at position
-      const elemResponse = await fetch("/api/browser", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "getElements",
-          sessionId,
-        }),
-      });
+        // Then get elements to find what was clicked
+        const elemData = await browserAction("getElements");
 
-      const elemData = await elemResponse.json();
+        if (elemData.elements && elemData.elements.length > 0) {
+          // Find closest element to click position
+          let closest = elemData.elements[0];
+          let minDist = Infinity;
 
-      if (elemData.elements && elemData.elements.length > 0) {
-        // Find closest element to click position
-        let closest = elemData.elements[0];
-        let minDist = Infinity;
+          for (const el of elemData.elements) {
+            const centerX = el.rect.x + el.rect.width / 2;
+            const centerY = el.rect.y + el.rect.height / 2;
+            const dist = Math.sqrt((centerX - x) ** 2 + (centerY - y) ** 2);
 
-        for (const el of elemData.elements) {
-          const centerX = el.rect.x + el.rect.width / 2;
-          const centerY = el.rect.y + el.rect.height / 2;
-          const dist = Math.sqrt((centerX - x) ** 2 + (centerY - y) ** 2);
+            if (dist < minDist && dist < 100) { // Within 100px
+              minDist = dist;
+              closest = el;
+            }
+          }
 
-          if (dist < minDist) {
-            minDist = dist;
-            closest = el;
+          if (minDist < 100) {
+            setSelectedElement({
+              selector: closest.selector,
+              text: closest.text,
+              tagName: closest.tagName,
+            });
+
+            toast.success("Element seçildi", {
+              description: `${closest.tagName}: ${closest.text.substring(0, 30)}...`,
+            });
+          } else {
+            toast.warning("Element bulunamadı", {
+              description: "Daha belirgin bir alana tıklayın",
+            });
           }
         }
 
-        setSelectedElement({
-          selector: closest.selector,
-          text: closest.text,
-          tagName: closest.tagName,
-        });
-
-        toast.success("Element seçildi", {
-          description: `${closest.tagName}: ${closest.text.substring(0, 30)}...`,
-        });
+        // Get updated screenshot
+        const ssData = await browserAction("screenshot");
+        if (ssData.screenshot) {
+          setScreenshot(ssData.screenshot);
+        }
+      } catch (error) {
+        console.error("Selection error:", error);
+      } finally {
+        setLoading(false);
       }
-    } catch (error) {
-      console.error("Click error:", error);
-    } finally {
-      setLoading(false);
+    }
+  };
+
+  // Mouse wheel scroll
+  const handleWheel = (e: React.WheelEvent) => {
+    if (!screenshot) return;
+    e.preventDefault();
+
+    if (e.deltaY > 0) {
+      scroll("down", Math.min(Math.abs(e.deltaY), 500));
+    } else {
+      scroll("up", Math.min(Math.abs(e.deltaY), 500));
     }
   };
 
@@ -305,7 +379,7 @@ export default function BrowserPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: panelName,
-          loginUrl: history[0] || currentUrl,
+          loginUrl: currentUrl,
           targetUrl: currentUrl,
           email,
           password,
@@ -325,7 +399,7 @@ export default function BrowserPage() {
 
         // Reset form
         setSelectedElement(null);
-        setSelectMode(false);
+        setMode("browse");
       } else {
         toast.error("Kaydetme hatası", { description: data.error });
       }
@@ -356,7 +430,8 @@ export default function BrowserPage() {
             size="icon"
             className="h-9 w-9 text-zinc-400 hover:text-white"
             onClick={goBack}
-            disabled={historyIndex <= 0 || loading}
+            disabled={loading}
+            title="Geri"
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
@@ -365,7 +440,8 @@ export default function BrowserPage() {
             size="icon"
             className="h-9 w-9 text-zinc-400 hover:text-white"
             onClick={goForward}
-            disabled={historyIndex >= history.length - 1 || loading}
+            disabled={loading}
+            title="İleri"
           >
             <ArrowRight className="h-4 w-4" />
           </Button>
@@ -375,6 +451,7 @@ export default function BrowserPage() {
             className="h-9 w-9 text-zinc-400 hover:text-white"
             onClick={refresh}
             disabled={!currentUrl || loading}
+            title="Yenile"
           >
             <RotateCcw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
           </Button>
@@ -400,7 +477,7 @@ export default function BrowserPage() {
           </Button>
         </form>
 
-        {/* Status Badges */}
+        {/* Mode Toggle & Status */}
         <div className="flex items-center gap-2">
           {isLoggedIn && (
             <Badge className="bg-green-500/20 text-green-400 border-green-500/30">
@@ -408,12 +485,18 @@ export default function BrowserPage() {
               Giriş Yapıldı
             </Badge>
           )}
-          {selectMode && (
-            <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 animate-pulse">
-              <Crosshair className="h-3 w-3 mr-1" />
-              Seçim Modu
-            </Badge>
-          )}
+
+          {/* Mode indicator */}
+          <Badge className={mode === "select"
+            ? "bg-amber-500/20 text-amber-400 border-amber-500/30 animate-pulse"
+            : "bg-zinc-700/50 text-zinc-400 border-zinc-600"
+          }>
+            {mode === "select" ? (
+              <><Crosshair className="h-3 w-3 mr-1" /> Seçim Modu</>
+            ) : (
+              <><Hand className="h-3 w-3 mr-1" /> Gezinme Modu</>
+            )}
+          </Badge>
         </div>
 
         {/* Action Buttons */}
@@ -431,15 +514,26 @@ export default function BrowserPage() {
           )}
 
           {screenshot && (
-            <Button
-              variant={selectMode ? "default" : "outline"}
-              size="sm"
-              onClick={() => setSelectMode(!selectMode)}
-              className={selectMode ? "bg-amber-500 text-black hover:bg-amber-600" : "border-zinc-700"}
-            >
-              <MousePointer2 className="h-4 w-4 mr-1" />
-              Element Seç
-            </Button>
+            <>
+              <Button
+                variant={mode === "browse" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setMode("browse")}
+                className={mode === "browse" ? "bg-zinc-700 text-white" : "border-zinc-700"}
+              >
+                <Hand className="h-4 w-4 mr-1" />
+                Gezin
+              </Button>
+              <Button
+                variant={mode === "select" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setMode("select")}
+                className={mode === "select" ? "bg-amber-500 text-black hover:bg-amber-600" : "border-zinc-700"}
+              >
+                <Target className="h-4 w-4 mr-1" />
+                Element Seç
+              </Button>
+            </>
           )}
         </div>
       </div>
@@ -447,9 +541,13 @@ export default function BrowserPage() {
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
         {/* Browser View */}
-        <div className="flex-1 overflow-auto bg-zinc-900 relative">
+        <div
+          ref={containerRef}
+          className="flex-1 overflow-hidden bg-zinc-900 relative"
+          onWheel={handleWheel}
+        >
           {loading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-zinc-950/80 z-10">
+            <div className="absolute inset-0 flex items-center justify-center bg-zinc-950/80 z-20">
               <div className="text-center">
                 <Loader2 className="h-10 w-10 animate-spin mx-auto mb-3 text-amber-500" />
                 <p className="text-zinc-400">Sayfa yükleniyor...</p>
@@ -466,34 +564,71 @@ export default function BrowserPage() {
                 <h2 className="text-2xl font-bold mb-2">Panel Tarayıcısı</h2>
                 <p className="text-zinc-400 mb-6">
                   Yukarıdaki adres çubuğuna izlemek istediğiniz panelin adresini girin.
-                  Giriş yapın ve takip etmek istediğiniz değeri seçin.
+                  Normal bir tarayıcı gibi gezinin, giriş yapın ve takip etmek istediğiniz değeri seçin.
                 </p>
                 <div className="flex flex-wrap gap-2 justify-center">
                   <Badge variant="outline" className="text-zinc-400">1. URL Girin</Badge>
-                  <Badge variant="outline" className="text-zinc-400">2. Giriş Yapın</Badge>
-                  <Badge variant="outline" className="text-zinc-400">3. Element Seçin</Badge>
-                  <Badge variant="outline" className="text-zinc-400">4. Kaydedin</Badge>
+                  <Badge variant="outline" className="text-zinc-400">2. Sayfada Gezinin</Badge>
+                  <Badge variant="outline" className="text-zinc-400">3. Giriş Yapın</Badge>
+                  <Badge variant="outline" className="text-zinc-400">4. Element Seçin</Badge>
                 </div>
               </div>
             </div>
           )}
 
           {screenshot && (
-            <div className="relative">
-              {selectMode && (
+            <div className="relative h-full">
+              {/* Mode indicator overlay */}
+              {mode === "select" && (
                 <div className="absolute top-0 left-0 right-0 z-10 p-2 bg-amber-500 text-black text-sm text-center font-medium">
-                  <Crosshair className="h-4 w-4 inline mr-2" />
+                  <Target className="h-4 w-4 inline mr-2" />
                   Takip etmek istediğiniz değere tıklayın
                 </div>
               )}
-              <img
-                ref={imageRef}
-                src={screenshot}
-                alt="Page screenshot"
-                className={`w-full h-auto ${selectMode ? "cursor-crosshair" : ""}`}
-                onClick={handleImageClick}
-                style={{ marginTop: selectMode ? "36px" : "0" }}
-              />
+
+              {/* Browser screenshot */}
+              <div className="h-full overflow-auto">
+                <img
+                  ref={imageRef}
+                  src={screenshot}
+                  alt="Page screenshot"
+                  className={`w-full h-auto ${
+                    mode === "select" ? "cursor-crosshair" : "cursor-pointer"
+                  }`}
+                  onClick={handleImageClick}
+                  style={{ marginTop: mode === "select" ? "36px" : "0" }}
+                  draggable={false}
+                />
+              </div>
+
+              {/* Scroll controls */}
+              <div className="absolute right-4 top-1/2 -translate-y-1/2 flex flex-col gap-2 z-10">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-10 w-10 bg-zinc-900/90 border-zinc-700 hover:bg-zinc-800"
+                  onClick={() => scroll("up", 400)}
+                  disabled={loading}
+                >
+                  <ChevronUp className="h-5 w-5" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-10 w-10 bg-zinc-900/90 border-zinc-700 hover:bg-zinc-800"
+                  onClick={() => scroll("down", 400)}
+                  disabled={loading}
+                >
+                  <ChevronDown className="h-5 w-5" />
+                </Button>
+              </div>
+
+              {/* Scroll indicator */}
+              {scrollPosition && (
+                <div className="absolute bottom-4 right-4 text-xs text-zinc-500 bg-zinc-900/80 px-2 py-1 rounded">
+                  Scroll: {Math.round((scrollPosition.y / Math.max(scrollPosition.maxY, 1)) * 100)}%
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -586,7 +721,7 @@ export default function BrowserPage() {
 
                 <div className="p-3 rounded-lg bg-zinc-800 border border-zinc-700">
                   <p className="text-sm font-medium mb-1">Değer:</p>
-                  <p className="text-amber-400 font-mono">{selectedElement.text}</p>
+                  <p className="text-amber-400 font-mono text-lg">{selectedElement.text}</p>
                   <p className="text-xs text-zinc-500 mt-2 break-all">
                     Seçici: <code>{selectedElement.selector}</code>
                   </p>
@@ -645,6 +780,15 @@ export default function BrowserPage() {
                   )}
                   Paneli Kaydet
                 </Button>
+
+                <Button
+                  variant="outline"
+                  onClick={() => setSelectedElement(null)}
+                  className="w-full border-zinc-700"
+                >
+                  <X className="h-4 w-4 mr-2" />
+                  İptal
+                </Button>
               </div>
             )}
           </div>
@@ -662,7 +806,9 @@ export default function BrowserPage() {
           {pageInfo && (
             <span>{pageInfo.title}</span>
           )}
-          <span>Panel Sistemi v2.0</span>
+          <span className="text-zinc-600">
+            {mode === "browse" ? "Tıklayarak gezinin" : "Element seçmek için tıklayın"} | ↑↓ ile kaydırın
+          </span>
         </div>
       </div>
     </div>
