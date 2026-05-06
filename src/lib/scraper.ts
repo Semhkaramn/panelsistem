@@ -1,6 +1,7 @@
 import type { Panel } from "@prisma/client";
 import puppeteer, { type Browser, type Page, type Cookie } from "puppeteer-core";
 import chromium from "@sparticuz/chromium";
+import * as fs from "fs";
 
 interface ScrapeResult {
   success: boolean;
@@ -15,6 +16,51 @@ const cookieStore: Map<string, Cookie[]> = new Map();
 // Browser instance (reusable)
 let browserInstance: Browser | null = null;
 
+async function getExecutablePath(): Promise<string | null> {
+  // Check environment variable first
+  if (process.env.CHROME_PATH) {
+    return process.env.CHROME_PATH;
+  }
+
+  // Try @sparticuz/chromium (for serverless environments)
+  try {
+    const chromiumPath = await chromium.executablePath();
+    if (chromiumPath && fs.existsSync(chromiumPath)) {
+      return chromiumPath;
+    }
+  } catch (e) {
+    console.log("@sparticuz/chromium not available, trying fallback paths...");
+  }
+
+  // Fallback paths for different systems
+  const possiblePaths = [
+    // Linux
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
+    "/snap/bin/chromium",
+    // Windows
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+    // macOS
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+  ];
+
+  for (const path of possiblePaths) {
+    try {
+      if (fs.existsSync(path)) {
+        return path;
+      }
+    } catch (e) {
+      continue;
+    }
+  }
+
+  return null;
+}
+
 async function getBrowser(): Promise<Browser> {
   if (browserInstance && browserInstance.connected) {
     return browserInstance;
@@ -22,27 +68,64 @@ async function getBrowser(): Promise<Browser> {
 
   console.log("🌐 Tarayıcı başlatılıyor...");
 
-  const executablePath = process.env.CHROME_PATH ||
-    await chromium.executablePath() ||
-    "/usr/bin/google-chrome-stable" ||
-    "/usr/bin/chromium-browser";
+  const executablePath = await getExecutablePath();
 
-  browserInstance = await puppeteer.launch({
-    executablePath,
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--disable-blink-features=AutomationControlled",
-      "--window-size=1920,1080",
-    ],
-    defaultViewport: {
-      width: 1920,
-      height: 1080,
-    },
-  });
+  // Common launch args
+  const launchArgs = [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-gpu",
+    "--disable-blink-features=AutomationControlled",
+    "--window-size=1920,1080",
+  ];
+
+  // If we have an executable path, use it
+  if (executablePath) {
+    console.log(`✅ Chrome bulundu: ${executablePath}`);
+    browserInstance = await puppeteer.launch({
+      executablePath,
+      headless: true,
+      args: launchArgs,
+      defaultViewport: {
+        width: 1920,
+        height: 1080,
+      },
+    });
+  } else {
+    // Try using channel as fallback (finds system Chrome)
+    console.log("🔍 Sistem Chrome aranıyor (channel: chrome)...");
+    try {
+      browserInstance = await puppeteer.launch({
+        channel: "chrome",
+        headless: true,
+        args: launchArgs,
+        defaultViewport: {
+          width: 1920,
+          height: 1080,
+        },
+      });
+    } catch (channelError) {
+      // Try chromium channel
+      console.log("🔍 Sistem Chromium aranıyor (channel: chromium)...");
+      try {
+        browserInstance = await puppeteer.launch({
+          channel: "chromium",
+          headless: true,
+          args: launchArgs,
+          defaultViewport: {
+            width: 1920,
+            height: 1080,
+          },
+        });
+      } catch (chromiumError) {
+        throw new Error(
+          "Chrome/Chromium bulunamadı. Lütfen Chrome yükleyin veya CHROME_PATH environment variable ayarlayın. " +
+          "Alternatif olarak 'puppeteer' paketini kullanabilirsiniz (puppeteer-core yerine)."
+        );
+      }
+    }
+  }
 
   console.log("✅ Tarayıcı başlatıldı");
   return browserInstance;
