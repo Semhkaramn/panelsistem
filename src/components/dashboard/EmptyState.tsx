@@ -1,7 +1,8 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { Plus, Monitor, ArrowRight } from "lucide-react";
+import { Plus, Monitor, ArrowRight, Globe } from "lucide-react";
+import Link from "next/link";
 
 interface EmptyStateProps {
   onAddPanel: () => void;
@@ -25,27 +26,29 @@ export function EmptyState({ onAddPanel }: EmptyStateProps) {
         Değer değiştiğinde anında Telegram bildirimi alın.
       </p>
 
-      <Button size="lg" className="gap-2" onClick={onAddPanel}>
-        <Plus className="h-5 w-5" />
-        İlk Paneli Ekle
-        <ArrowRight className="h-4 w-4 ml-2" />
-      </Button>
+      <Link href="/browser">
+        <Button size="lg" className="gap-2 bg-amber-500 hover:bg-amber-600 text-black">
+          <Globe className="h-5 w-5" />
+          Tarayıcıda Panel Ekle
+          <ArrowRight className="h-4 w-4 ml-2" />
+        </Button>
+      </Link>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-12 max-w-3xl w-full">
         {[
           {
             step: "1",
-            title: "Panel Bilgilerini Girin",
-            desc: "Giriş URL'si, hedef sayfa ve credentials",
+            title: "Siteye Git ve Giriş Yap",
+            desc: "URL girin, tarayıcıda açın ve giriş yapın",
           },
           {
             step: "2",
-            title: "Element Seçin",
-            desc: "İzlenecek değerin CSS seçicisini belirtin",
+            title: "Değer Seçin",
+            desc: "Takip etmek istediğiniz değere tıklayın",
           },
           {
             step: "3",
-            title: "Bildirimleri Alın",
+            title: "Otomatik Takip",
             desc: "Değer değişince Telegram'a bildirim",
           },
         ].map((item) => (
