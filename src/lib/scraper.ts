@@ -1,6 +1,5 @@
 import type { Panel } from "@prisma/client";
 import puppeteer, { type Browser, type Page, type Cookie } from "puppeteer-core";
-import chromium from "@sparticuz/chromium";
 
 interface ScrapeResult {
   success: boolean;
@@ -15,10 +14,12 @@ const cookieStore: Map<string, Cookie[]> = new Map();
 // Browser instance (reusable)
 let browserInstance: Browser | null = null;
 
-// Check if running in serverless environment
-const isServerless = !!process.env.AWS_LAMBDA_FUNCTION_NAME ||
-                     !!process.env.NETLIFY ||
-                     !!process.env.VERCEL;
+// Get Browserless WebSocket URL
+function getBrowserlessWSEndpoint(): string | null {
+  const apiKey = process.env.BROWSERLESS_API_KEY;
+  if (!apiKey) return null;
+  return `wss://chrome.browserless.io?token=${apiKey}`;
+}
 
 async function getBrowser(): Promise<Browser> {
   if (browserInstance && browserInstance.connected) {
@@ -26,78 +27,51 @@ async function getBrowser(): Promise<Browser> {
   }
 
   console.log("🌐 Tarayıcı başlatılıyor...");
-  console.log(`📍 Ortam: ${isServerless ? 'Serverless' : 'Local'}`);
 
-  // Common launch args
-  const launchArgs = [
-    "--no-sandbox",
-    "--disable-setuid-sandbox",
-    "--disable-dev-shm-usage",
-    "--disable-gpu",
-    "--disable-blink-features=AutomationControlled",
-    "--single-process",
-    "--no-zygote",
-  ];
+  // Try Browserless.io first (recommended for serverless)
+  const browserlessEndpoint = getBrowserlessWSEndpoint();
 
-  try {
-    if (isServerless || process.env.USE_CHROMIUM === "true") {
-      // Serverless environment - use @sparticuz/chromium
-      console.log("🔧 @sparticuz/chromium kullanılıyor...");
-
-      const executablePath = await chromium.executablePath();
-      console.log(`✅ Chromium yolu: ${executablePath}`);
-
-      browserInstance = await puppeteer.launch({
-        executablePath,
-        headless: true,
-        args: [...chromium.args, ...launchArgs],
-        defaultViewport: {
-          width: 1920,
-          height: 1080,
-        },
+  if (browserlessEndpoint) {
+    console.log("🔧 Browserless.io kullanılıyor...");
+    try {
+      browserInstance = await puppeteer.connect({
+        browserWSEndpoint: browserlessEndpoint,
       });
-    } else {
-      // Local environment - try to find system Chrome
-      console.log("🔧 Sistem Chrome aranıyor...");
-
-      // Check for CHROME_PATH environment variable
-      if (process.env.CHROME_PATH) {
-        console.log(`✅ CHROME_PATH: ${process.env.CHROME_PATH}`);
-        browserInstance = await puppeteer.launch({
-          executablePath: process.env.CHROME_PATH,
-          headless: true,
-          args: launchArgs,
-          defaultViewport: {
-            width: 1920,
-            height: 1080,
-          },
-        });
-      } else {
-        // Try channel approach for system Chrome
-        console.log("🔍 channel: chrome deneniyor...");
-        browserInstance = await puppeteer.launch({
-          channel: "chrome",
-          headless: true,
-          args: launchArgs,
-          defaultViewport: {
-            width: 1920,
-            height: 1080,
-          },
-        });
-      }
+      console.log("✅ Browserless.io bağlantısı kuruldu");
+      return browserInstance;
+    } catch (error) {
+      console.error("❌ Browserless.io bağlantı hatası:", error);
+      throw new Error(
+        "Browserless.io bağlantısı kurulamadı. API anahtarınızı kontrol edin."
+      );
     }
-
-    console.log("✅ Tarayıcı başlatıldı");
-    return browserInstance;
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error(`❌ Tarayıcı başlatma hatası: ${errorMessage}`);
-
-    throw new Error(
-      `Chrome/Chromium başlatılamadı: ${errorMessage}. ` +
-      "Serverless ortam için USE_CHROMIUM=true ayarlayın veya CHROME_PATH belirtin."
-    );
   }
+
+  // Fallback to local Chrome if CHROME_PATH is set
+  if (process.env.CHROME_PATH) {
+    console.log(`🔧 Yerel Chrome kullanılıyor: ${process.env.CHROME_PATH}`);
+    browserInstance = await puppeteer.launch({
+      executablePath: process.env.CHROME_PATH,
+      headless: true,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+      ],
+      defaultViewport: {
+        width: 1920,
+        height: 1080,
+      },
+    });
+    console.log("✅ Yerel Chrome başlatıldı");
+    return browserInstance;
+  }
+
+  throw new Error(
+    "Tarayıcı bulunamadı. BROWSERLESS_API_KEY veya CHROME_PATH ayarlayın. " +
+    "Browserless.io için ücretsiz hesap: https://browserless.io"
+  );
 }
 
 async function delay(ms: number): Promise<void> {
