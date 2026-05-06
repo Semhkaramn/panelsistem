@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Bell, Settings, RefreshCw } from "lucide-react";
+import { Activity, Bell, Settings, RefreshCw, Globe, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { usePanelStore } from "@/store/panels";
 import { useState } from "react";
+import Link from "next/link";
 
 interface HeaderProps {
   onOpenSettings: () => void;
@@ -53,6 +54,17 @@ export function Header({ onOpenSettings }: HeaderProps) {
         </div>
 
         <div className="flex items-center gap-2">
+          <Link href="/browser">
+            <Button
+              variant="default"
+              size="sm"
+              className="gap-2 bg-amber-500 hover:bg-amber-600 text-black"
+            >
+              <Plus className="h-4 w-4" />
+              <span className="hidden sm:inline">Panel Ekle</span>
+            </Button>
+          </Link>
+
           <Button
             variant="ghost"
             size="sm"
