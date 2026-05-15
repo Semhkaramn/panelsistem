@@ -842,11 +842,12 @@ async def ben_command(update: Update, context):
             disable_web_page_preview=True
         )
     else:
-        # Bot başlatılmamış - sadece tek buton göster
+        # Bot başlatılmamış - direkt bot linkine yönlendiren buton göster
+        deep_link = f"https://t.me/{bot_username}?start=stats_{message.chat.id}"
         keyboard = [[
             InlineKeyboardButton(
                 "📊 İstatistikler için buraya bas",
-                callback_data=f"check_started_{user.id}"
+                url=deep_link
             )
         ]]
 
