@@ -195,3 +195,33 @@ def get_media_type_text(media_type: str) -> str:
         'animation': 'GIF'
     }
     return types.get(media_type, media_type)
+
+
+# Kullanıcı İstatistikleri
+STATS = {
+    "USER_CARD": (
+        "📊 <b>{name}</b> {username_line}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📈 <b>Mesaj İstatistikleri</b>\n"
+        "  Günlük  ➜  <b>{daily}</b>\n"
+        "  Haftalık  ➜  <b>{weekly}</b>\n"
+        "  Aylık  ➜  <b>{monthly}</b>\n"
+        "  Toplam  ➜  <b>{total}</b>\n\n"
+        "🎲 <b>Randy İstatistikleri</b>\n"
+        "  Katılım  ➜  <b>{randy_participated}</b>\n"
+        "  Kazanma  ➜  <b>{randy_won}</b>\n"
+        "{win_rate_line}\n\n"
+        "🏅 <b>Sıralama</b>\n"
+        "  Günlük  ➜  <b>#{daily_rank}</b>\n"
+        "  Haftalık  ➜  <b>#{weekly_rank}</b>\n"
+        "  Aylık  ➜  <b>#{monthly_rank}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━"
+    ),
+    "KAYIT_YOK": (
+        "📭 <b>Kayıt Bulunamadı</b>\n\n"
+        "Henüz grupta mesaj atmamışsınız veya kayıt yok."
+    ),
+    "BOT_BASLAT": (
+        "👋 {mention}, İstatistiklerini görmek için önce botu başlat:"
+    ),
+}
