@@ -838,18 +838,24 @@ async def handle_check_started(query, user_id: int, target_user_id: int, context
     Bot başlatma kontrolü - .ben komutu için
     Kullanıcı butona tıklayınca botu başlatıp başlatmadığını kontrol et
     """
+    from config import BOT_USERNAME
+
     # Sadece hedef kullanıcı tıklayabilir
     if user_id != target_user_id:
         await safe_answer(query, "Bu buton sana ait değil!", show_alert=True)
         return
 
-    # Kullanıcı botu başlatmış mı kontrol et
-    try:
-        # Bot'a mesaj göndermeyi dene
-        await context.bot.send_chat_action(user_id, "typing")
+    chat = query.message.chat
+    if not chat or chat.type not in ['group', 'supergroup']:
+        await safe_answer(query, "Bu komut sadece gruplarda çalışır.", show_alert=True)
+        return
 
-        # BAŞARILIYSA - İstatistikleri göster ve butonu kaldır
-        chat = query.message.chat
+    # Bot username'ini al
+    bot_username = BOT_USERNAME or (await context.bot.get_me()).username
+
+    # Kullanıcı botu başlatmış mı kontrol et - özelden mesaj göndermeyi dene
+    try:
+        # Özelden istatistik mesajı gönder
         stats = await get_full_user_stats(user_id, chat.id)
 
         if stats:
@@ -891,25 +897,37 @@ async def handle_check_started(query, user_id: int, target_user_id: int, context
         else:
             stats_text = STATS["KAYIT_YOK"]
 
-        # Mesajı istatistiklerle güncelle (butonları kaldır)
+        # ÖNCE özelden mesaj göndermeyi dene - bu başarılı olursa bot başlatılmış demektir
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=stats_text,
+            parse_mode="HTML"
+        )
+
+        # Bot başlatılmış - grupta mesajı sil
         try:
-            await query.edit_message_text(
-                stats_text,
-                parse_mode="HTML",
-                reply_markup=None
-            )
+            await query.message.delete()
         except TelegramError:
-            # Düzenlenemezse mesajı sil
+            # Silinemezse düzenle
             try:
-                await query.message.delete()
+                await query.edit_message_text(
+                    f"📨 İstatistiklerin özelden gönderildi!",
+                    reply_markup=None,
+                    parse_mode="HTML"
+                )
             except TelegramError:
                 pass
 
-        await safe_answer(query, "✅ İstatistiklerin gösterildi!", show_alert=False)
+        await safe_answer(query, "✅ İstatistiklerin özelden gönderildi!", show_alert=False)
 
     except TelegramError:
-        # Kullanıcı botu henüz başlatmamış
-        await safe_answer(query, "❌ Önce yukarıdaki 'Botu Başlat' butonuna tıkla!", show_alert=True)
+        # Kullanıcı botu henüz başlatmamış - deep link göster
+        deep_link = f"https://t.me/{bot_username}?start=stats_{chat.id}"
+        await safe_answer(
+            query,
+            f"❌ Önce botu başlat!\n\nTıkla: {deep_link}",
+            show_alert=True
+        )
 
 
 async def handle_ben_stats(query, user_id: int, target_user_id: int, context: ContextTypes.DEFAULT_TYPE):
