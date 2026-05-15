@@ -1,7 +1,7 @@
 """
 🎲 Randy Servisi
 Randy oluşturma, başlatma, katılım ve sonlandırma işlemleri
-Kanal yönetimi ve açma/kapama özellikleri
+Kanal yönetimi, admin katılımı ve açma/kapama özellikleri
 """
 
 import random
@@ -90,8 +90,8 @@ async def get_or_create_group_draft(creator_id: int, group_id: int) -> Optional[
 
             # Yoksa yeni taslak oluştur
             draft_id = await conn.fetchval("""
-                INSERT INTO randy_drafts (creator_id, group_id, is_enabled)
-                VALUES ($1, $2, TRUE)
+                INSERT INTO randy_drafts (creator_id, group_id, is_enabled, admin_can_join)
+                VALUES ($1, $2, TRUE, FALSE)
                 RETURNING id
             """, creator_id, group_id)
 
@@ -192,10 +192,53 @@ async def update_draft(creator_id: int, group_id: int = None, **kwargs) -> bool:
 
 
 # ============================================
+# ADMİN KATILIM AYARI
+# ============================================
+
+async def toggle_admin_can_join(group_id: int) -> Tuple[bool, bool]:
+    """Admin katılımını aç/kapat - (başarılı mı, yeni durum)"""
+    try:
+        async with db.pool.acquire() as conn:
+            current = await conn.fetchval("""
+                SELECT admin_can_join FROM randy_drafts
+                WHERE group_id = $1
+            """, group_id)
+
+            if current is None:
+                return False, False
+
+            new_value = not current
+            await conn.execute("""
+                UPDATE randy_drafts
+                SET admin_can_join = $1, updated_at = NOW()
+                WHERE group_id = $2
+            """, new_value, group_id)
+
+            return True, new_value
+    except Exception as e:
+        logger.error(f"❌ Admin katılım toggle hatası: {e}")
+        return False, False
+
+
+async def get_admin_can_join(group_id: int) -> bool:
+    """Admin katılabilir mi"""
+    try:
+        async with db.pool.acquire() as conn:
+            result = await conn.fetchval("""
+                SELECT admin_can_join FROM randy_drafts
+                WHERE group_id = $1
+            """, group_id)
+            return result or False
+    except Exception as e:
+        logger.error(f"❌ Admin katılım durumu hatası: {e}")
+        return False
+
+
+# ============================================
 # KANAL AÇ/KAPAT YÖNETİMİ (Nerede açılabilir)
 # ============================================
 
-async def add_allowed_channel(draft_id: int, channel_id: int, title: str = None, username: str = None) -> Tuple[bool, str]:
+async def add_allowed_channel(draft_id: int, channel_id: int, title: str = None, username: str = None, no_requirement: bool = False) -> Tuple[bool, str]:
     """Randy'nin açılabileceği kanal ekle"""
     try:
         async with db.pool.acquire() as conn:
@@ -208,9 +251,9 @@ async def add_allowed_channel(draft_id: int, channel_id: int, title: str = None,
                 return False, "Bu kanal zaten ekli"
 
             await conn.execute("""
-                INSERT INTO randy_allowed_channels (draft_id, channel_id, channel_title, channel_username, is_enabled)
-                VALUES ($1, $2, $3, $4, TRUE)
-            """, draft_id, channel_id, title, username)
+                INSERT INTO randy_allowed_channels (draft_id, channel_id, channel_title, channel_username, is_enabled, no_requirement)
+                VALUES ($1, $2, $3, $4, TRUE, $5)
+            """, draft_id, channel_id, title, username, no_requirement)
 
             return True, "Kanal eklendi"
     except Exception as e:
@@ -257,12 +300,37 @@ async def toggle_allowed_channel(draft_id: int, channel_id: int) -> Tuple[bool, 
         return False, False
 
 
+async def toggle_channel_no_requirement(draft_id: int, channel_id: int) -> Tuple[bool, bool]:
+    """Kanal şartsız açılma ayarını toggle et - (başarılı mı, yeni durum)"""
+    try:
+        async with db.pool.acquire() as conn:
+            current = await conn.fetchval("""
+                SELECT no_requirement FROM randy_allowed_channels
+                WHERE draft_id = $1 AND channel_id = $2
+            """, draft_id, channel_id)
+
+            if current is None:
+                return False, False
+
+            new_value = not current
+            await conn.execute("""
+                UPDATE randy_allowed_channels
+                SET no_requirement = $1
+                WHERE draft_id = $2 AND channel_id = $3
+            """, new_value, draft_id, channel_id)
+
+            return True, new_value
+    except Exception as e:
+        logger.error(f"❌ Şartsız açılma toggle hatası: {e}")
+        return False, False
+
+
 async def get_allowed_channels(draft_id: int) -> List[Dict]:
     """Randy açılabilir kanalları getir"""
     try:
         async with db.pool.acquire() as conn:
             channels = await conn.fetch("""
-                SELECT channel_id, channel_title, channel_username, is_enabled
+                SELECT channel_id, channel_title, channel_username, is_enabled, no_requirement
                 FROM randy_allowed_channels
                 WHERE draft_id = $1
                 ORDER BY created_at
@@ -273,8 +341,8 @@ async def get_allowed_channels(draft_id: int) -> List[Dict]:
         return []
 
 
-async def is_randy_enabled_for_channel(group_id: int, channel_id: int) -> bool:
-    """Bu kanalda Randy açık mı kontrol et"""
+async def is_randy_enabled_for_channel(group_id: int, channel_id: int) -> Tuple[bool, bool]:
+    """Bu kanalda Randy açık mı ve şartsız mı - (açık mı, şartsız mı)"""
     try:
         async with db.pool.acquire() as conn:
             # Önce draft'ı bul
@@ -283,32 +351,59 @@ async def is_randy_enabled_for_channel(group_id: int, channel_id: int) -> bool:
             """, group_id)
 
             if not draft:
-                # Draft yoksa, varsayılan olarak açık kabul et
-                return True
+                # Draft yoksa, varsayılan olarak açık ve şartlı
+                return True, False
 
             # Kanal listesini kontrol et
             channel = await conn.fetchrow("""
-                SELECT is_enabled FROM randy_allowed_channels
+                SELECT is_enabled, no_requirement FROM randy_allowed_channels
                 WHERE draft_id = $1 AND channel_id = $2
             """, draft['id'], channel_id)
 
             if not channel:
-                # Liste boşsa veya kanal eklenmemişse, varsayılan olarak açık
-                # Ama eğer liste varsa ve kanal eklenmemişse kapalı
+                # Liste boşsa veya kanal eklenmemişse
                 count = await conn.fetchval("""
                     SELECT COUNT(*) FROM randy_allowed_channels WHERE draft_id = $1
                 """, draft['id'])
 
-                # Eğer hiç kanal eklenmemişse, herkese açık
+                # Eğer hiç kanal eklenmemişse, herkese açık ve şartlı
                 if count == 0:
-                    return True
+                    return True, False
                 # Kanal listesi var ama bu kanal eklenmemişse, kapalı
-                return False
+                return False, False
 
-            return channel['is_enabled']
+            return channel['is_enabled'], channel['no_requirement'] or False
     except Exception as e:
         logger.error(f"❌ Kanal kontrolü hatası: {e}")
-        return True  # Hata durumunda açık kabul et
+        return True, False  # Hata durumunda açık ve şartlı kabul et
+
+
+async def set_selected_channel(group_id: int, channel_id: int) -> bool:
+    """Seçili kanalı ayarla (Randy nerede açılacak)"""
+    try:
+        async with db.pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE randy_drafts
+                SET selected_channel_id = $1, updated_at = NOW()
+                WHERE group_id = $2
+            """, channel_id, group_id)
+            return True
+    except Exception as e:
+        logger.error(f"❌ Seçili kanal ayarlama hatası: {e}")
+        return False
+
+
+async def get_selected_channel(group_id: int) -> Optional[int]:
+    """Seçili kanalı getir"""
+    try:
+        async with db.pool.acquire() as conn:
+            return await conn.fetchval("""
+                SELECT selected_channel_id FROM randy_drafts
+                WHERE group_id = $1
+            """, group_id)
+    except Exception as e:
+        logger.error(f"❌ Seçili kanal getirme hatası: {e}")
+        return None
 
 
 # ============================================
@@ -417,7 +512,7 @@ async def get_randy_channels(randy_id: int) -> List[Dict]:
 # RANDY YÖNETİMİ
 # ============================================
 
-async def start_randy(group_id: int, creator_id: int, message_id: int = None) -> Tuple[bool, Optional[Dict]]:
+async def start_randy(group_id: int, creator_id: int, message_id: int = None, opened_in_channel_id: int = None) -> Tuple[bool, Optional[Dict]]:
     """Randy başlat"""
     try:
         from config import ACTIVITY_GROUP_ID
@@ -435,6 +530,15 @@ async def start_randy(group_id: int, creator_id: int, message_id: int = None) ->
         if not draft.get('is_enabled', True):
             return False, {"error": "disabled"}
 
+        # Kanal bazlı kontrol
+        is_enabled = True
+        no_requirement = False
+
+        if opened_in_channel_id:
+            is_enabled, no_requirement = await is_randy_enabled_for_channel(group_id, opened_in_channel_id)
+            if not is_enabled:
+                return False, {"error": "channel_disabled"}
+
         async with db.pool.acquire() as conn:
             # Aktif Randy var mı kontrol et
             existing = await conn.fetchval("""
@@ -444,20 +548,28 @@ async def start_randy(group_id: int, creator_id: int, message_id: int = None) ->
             if existing:
                 return False, {"error": "already_active"}
 
+            # Şart tipini belirle - kanal şartsız ise 'none' yap
+            requirement_type = draft.get('requirement_type', 'none')
+            required_message_count = draft.get('required_message_count', 0)
+
+            if no_requirement:
+                requirement_type = 'none'
+                required_message_count = 0
+
             # Randy oluştur
             randy_id = await conn.fetchval("""
                 INSERT INTO randy (
                     group_id, creator_id, title, message, media_type, media_file_id,
                     requirement_type, required_message_count, winner_count,
-                    pin_message, status, message_id, started_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
+                    pin_message, status, message_id, admin_can_join, opened_in_channel_id, started_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
                 RETURNING id
             """,
                 group_id, creator_id, 'RANDY', draft['message'],
                 draft.get('media_type', 'none'), draft.get('media_file_id'),
-                draft.get('requirement_type', 'none'), draft.get('required_message_count', 0),
+                requirement_type, required_message_count,
                 draft.get('winner_count', 1), draft.get('pin_message', False),
-                STATUS_ACTIVE, message_id
+                STATUS_ACTIVE, message_id, draft.get('admin_can_join', False), opened_in_channel_id
             )
 
             # Taslaktaki zorunlu kanalları Randy'ye kopyala
@@ -479,10 +591,12 @@ async def start_randy(group_id: int, creator_id: int, message_id: int = None) ->
                 "message": draft['message'],
                 "media_type": draft.get('media_type', 'none'),
                 "media_file_id": draft.get('media_file_id'),
-                "requirement_type": draft.get('requirement_type', 'none'),
-                "required_message_count": draft.get('required_message_count', 0),
+                "requirement_type": requirement_type,
+                "required_message_count": required_message_count,
                 "winner_count": draft.get('winner_count', 1),
-                "pin_message": draft.get('pin_message', False)
+                "pin_message": draft.get('pin_message', False),
+                "admin_can_join": draft.get('admin_can_join', False),
+                "no_requirement": no_requirement
             }
     except Exception as e:
         logger.error(f"❌ Randy başlatma hatası: {e}")
@@ -593,12 +707,12 @@ async def join_randy(randy_id: int, user_id: int, username: str = None, first_na
         if randy['status'] != STATUS_ACTIVE:
             return False, "aktif_degil"
 
-        # Admin kontrolü
+        # Admin kontrolü - admin_can_join ayarına bak
         if bot and randy.get('group_id'):
             try:
                 from utils.admin_check import is_group_admin
                 is_admin = await is_group_admin(bot, randy['group_id'], user_id)
-                if is_admin:
+                if is_admin and not randy.get('admin_can_join', False):
                     return False, "admin_katilamaz"
             except Exception as e:
                 logger.warning(f"⚠️ Admin kontrolü hatası: {e}")
@@ -859,8 +973,8 @@ async def count_user_message(group_id: int, user_id: int, username: str = None, 
     try:
         async with db.pool.acquire() as conn:
             await conn.execute("""
-                INSERT INTO telegram_users (telegram_id, group_id, username, first_name, message_count, daily_count, weekly_count, monthly_count, last_message_at)
-                VALUES ($1, $2, $3, $4, 1, 1, 1, 1, NOW())
+                INSERT INTO telegram_users (telegram_id, group_id, username, first_name, message_count, daily_count, weekly_count, monthly_count, activity_count, last_message_at)
+                VALUES ($1, $2, $3, $4, 1, 1, 1, 1, 1, NOW())
                 ON CONFLICT (telegram_id, group_id)
                 DO UPDATE SET
                     username = COALESCE($3, telegram_users.username),
@@ -869,10 +983,120 @@ async def count_user_message(group_id: int, user_id: int, username: str = None, 
                     daily_count = telegram_users.daily_count + 1,
                     weekly_count = telegram_users.weekly_count + 1,
                     monthly_count = telegram_users.monthly_count + 1,
+                    activity_count = telegram_users.activity_count + 1,
                     last_message_at = NOW(),
                     updated_at = NOW()
             """, user_id, group_id, username, first_name)
             return True
     except Exception as e:
         logger.error(f"❌ Mesaj sayma hatası: {e}")
+        return False
+
+
+# ============================================
+# KULLANICI İSTATİSTİKLERİ
+# ============================================
+
+async def get_user_stats(user_id: int, group_id: int) -> Optional[Dict]:
+    """Kullanıcı istatistiklerini getir"""
+    try:
+        async with db.pool.acquire() as conn:
+            user = await conn.fetchrow("""
+                SELECT * FROM telegram_users
+                WHERE telegram_id = $1 AND group_id = $2
+            """, user_id, group_id)
+
+            if user:
+                return dict(user)
+            return None
+    except Exception as e:
+        logger.error(f"❌ Kullanıcı istatistikleri hatası: {e}")
+        return None
+
+
+async def get_full_user_stats(user_id: int, group_id: int) -> Optional[Dict]:
+    """Kullanıcının tam istatistiklerini getir - sıralama dahil"""
+    try:
+        async with db.pool.acquire() as conn:
+            # Kullanıcı bilgileri
+            user = await conn.fetchrow("""
+                SELECT * FROM telegram_users
+                WHERE telegram_id = $1 AND group_id = $2
+            """, user_id, group_id)
+
+            if not user:
+                return {
+                    'daily': 0, 'weekly': 0, 'monthly': 0, 'total': 0,
+                    'daily_rank': '-', 'weekly_rank': '-', 'monthly_rank': '-', 'activity_rank': '-',
+                    'randy_participated': 0, 'randy_won': 0
+                }
+
+            # Günlük sıralama
+            daily_rank = await conn.fetchval("""
+                SELECT COUNT(*) + 1 FROM telegram_users
+                WHERE group_id = $1 AND daily_count > $2
+            """, group_id, user['daily_count'] or 0)
+
+            # Haftalık sıralama
+            weekly_rank = await conn.fetchval("""
+                SELECT COUNT(*) + 1 FROM telegram_users
+                WHERE group_id = $1 AND weekly_count > $2
+            """, group_id, user['weekly_count'] or 0)
+
+            # Aylık sıralama
+            monthly_rank = await conn.fetchval("""
+                SELECT COUNT(*) + 1 FROM telegram_users
+                WHERE group_id = $1 AND monthly_count > $2
+            """, group_id, user['monthly_count'] or 0)
+
+            # Aktivite sıralama
+            activity_rank = await conn.fetchval("""
+                SELECT COUNT(*) + 1 FROM telegram_users
+                WHERE group_id = $1 AND activity_count > $2
+            """, group_id, user.get('activity_count', 0) or 0)
+
+            # Randy katılım sayısı
+            randy_participated = await conn.fetchval("""
+                SELECT COUNT(*) FROM randy_participants rp
+                JOIN randy r ON rp.randy_id = r.id
+                WHERE rp.telegram_id = $1 AND r.group_id = $2
+                AND (rp.username IS NOT NULL OR rp.first_name IS NOT NULL)
+            """, user_id, group_id) or 0
+
+            # Randy kazanma sayısı
+            randy_won = await conn.fetchval("""
+                SELECT COUNT(*) FROM randy_winners rw
+                JOIN randy r ON rw.randy_id = r.id
+                WHERE rw.telegram_id = $1 AND r.group_id = $2
+            """, user_id, group_id) or 0
+
+            return {
+                'daily': user['daily_count'] or 0,
+                'weekly': user['weekly_count'] or 0,
+                'monthly': user['monthly_count'] or 0,
+                'total': user['message_count'] or 0,
+                'activity': user.get('activity_count', 0) or 0,
+                'daily_rank': daily_rank,
+                'weekly_rank': weekly_rank,
+                'monthly_rank': monthly_rank,
+                'activity_rank': activity_rank,
+                'randy_participated': randy_participated,
+                'randy_won': randy_won
+            }
+    except Exception as e:
+        logger.error(f"❌ Tam kullanıcı istatistikleri hatası: {e}")
+        return None
+
+
+async def is_user_registered(user_id: int, group_id: int) -> bool:
+    """Kullanıcı kayıtlı mı"""
+    try:
+        async with db.pool.acquire() as conn:
+            result = await conn.fetchval("""
+                SELECT 1 FROM telegram_users
+                WHERE telegram_id = $1 AND group_id = $2
+            """, user_id, group_id)
+            return result is not None
+    except Exception as e:
+        logger.error(f"❌ Kullanıcı kayıt kontrolü hatası: {e}")
         return False
