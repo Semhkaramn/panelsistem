@@ -848,21 +848,64 @@ async def handle_check_started(query, user_id: int, target_user_id: int, context
         # Bot'a mesaj göndermeyi dene
         await context.bot.send_chat_action(user_id, "typing")
 
-        # BAŞARILIYSA - Mesajı tamamen sil
-        try:
-            await query.message.delete()
-        except TelegramError:
-            # Silinemezse sadece metni değiştir, butonları kaldır
+        # BAŞARILIYSA - İstatistikleri göster ve butonu kaldır
+        chat = query.message.chat
+        stats = await get_full_user_stats(user_id, chat.id)
+
+        if stats:
             try:
-                await query.edit_message_text(
-                    "✅ Bot başlatıldı! Tekrar <code>.ben</code> yazarak istatistiklerini görebilirsin.",
-                    parse_mode="HTML",
-                    reply_markup=None
-                )
+                user_info = await context.bot.get_chat(user_id)
+                username = user_info.username
+                first_name = user_info.first_name or "Kullanıcı"
+            except TelegramError:
+                username = None
+                first_name = "Kullanıcı"
+
+            username_line = f"• @{username}" if username else ""
+
+            if stats.get('randy_participated', 0) > 0:
+                win_rate = (stats.get('randy_won', 0) / stats['randy_participated']) * 100
+                win_rate_line = f"    Oran  ➜  <b>%{win_rate:.1f}</b>"
+            else:
+                win_rate_line = ""
+
+            display_name = f"@{username}" if username else first_name
+            mention = f'<a href="tg://user?id={user_id}">{display_name}</a>'
+
+            stats_text = STATS["USER_CARD"].format(
+                name=first_name,
+                username_line=username_line,
+                daily=stats.get('daily', 0),
+                weekly=stats.get('weekly', 0),
+                monthly=stats.get('monthly', 0),
+                total=stats.get('total', 0),
+                randy_participated=stats.get('randy_participated', 0),
+                randy_won=stats.get('randy_won', 0),
+                win_rate_line=win_rate_line,
+                daily_rank=stats.get('daily_rank', '-'),
+                weekly_rank=stats.get('weekly_rank', '-'),
+                monthly_rank=stats.get('monthly_rank', '-'),
+            )
+
+            stats_text = f"👋 {mention}\n\n{stats_text}"
+        else:
+            stats_text = STATS["KAYIT_YOK"]
+
+        # Mesajı istatistiklerle güncelle (butonları kaldır)
+        try:
+            await query.edit_message_text(
+                stats_text,
+                parse_mode="HTML",
+                reply_markup=None
+            )
+        except TelegramError:
+            # Düzenlenemezse mesajı sil
+            try:
+                await query.message.delete()
             except TelegramError:
                 pass
 
-        await safe_answer(query, "✅ Harika! Artık .ben komutunu kullanabilirsin.", show_alert=True)
+        await safe_answer(query, "✅ İstatistiklerin gösterildi!", show_alert=False)
 
     except TelegramError:
         # Kullanıcı botu henüz başlatmamış
