@@ -841,29 +841,22 @@ async def ben_command(update: Update, context):
             disable_web_page_preview=True
         )
     else:
-        # Bot başlatılmamış - deep link butonu göster
+        # Bot başlatılmamış - deep link + callback butonu göster
         deep_link = f"https://t.me/{bot_username}?start=stats_{chat.id}"
 
-        keyboard = [[
-            InlineKeyboardButton(
-                "📊 İstatistiklerimi Gör",
-                url=deep_link
-            )
-        ]]
+        keyboard = [
+            [InlineKeyboardButton("📊 Botu Başlat", url=deep_link)],
+            [InlineKeyboardButton("✅ Başlattım", callback_data=f"check_started_{user.id}")]
+        ]
 
-        sent_msg = await message.reply_text(
+        await message.reply_text(
             f"👋 {mention}\n\n"
-            "📊 İstatistiklerini görmek için aşağıdaki butona tıkla:",
+            "📊 İstatistiklerini görmek için:\n"
+            "1️⃣ Önce <b>Botu Başlat</b> butonuna tıkla\n"
+            "2️⃣ Sonra <b>Başlattım</b> butonuna tıkla",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="HTML"
         )
-
-        # 30 saniye sonra mesajı sil (buton kaybolsun diye)
-        await asyncio.sleep(30)
-        try:
-            await sent_msg.delete()
-        except TelegramError:
-            pass
 
 
 def main():
