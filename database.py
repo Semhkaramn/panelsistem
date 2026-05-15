@@ -81,10 +81,12 @@ class Database:
                     daily_count INT DEFAULT 0,
                     weekly_count INT DEFAULT 0,
                     monthly_count INT DEFAULT 0,
+                    activity_count INT DEFAULT 0,
                     last_message_at TIMESTAMP,
                     last_daily_reset TIMESTAMP DEFAULT NOW(),
                     last_weekly_reset TIMESTAMP DEFAULT NOW(),
                     last_monthly_reset TIMESTAMP DEFAULT NOW(),
+                    last_activity_reset TIMESTAMP DEFAULT NOW(),
                     created_at TIMESTAMP DEFAULT NOW(),
                     updated_at TIMESTAMP DEFAULT NOW(),
                     UNIQUE(telegram_id, group_id)
@@ -106,6 +108,8 @@ class Database:
                     winner_count INT DEFAULT 1,
                     pin_message BOOLEAN DEFAULT FALSE,
                     is_enabled BOOLEAN DEFAULT TRUE,
+                    admin_can_join BOOLEAN DEFAULT FALSE,
+                    selected_channel_id BIGINT,
                     created_at TIMESTAMP DEFAULT NOW(),
                     updated_at TIMESTAMP DEFAULT NOW()
                 )
@@ -127,6 +131,8 @@ class Database:
                     status TEXT DEFAULT 'draft',
                     message_id BIGINT,
                     pin_message BOOLEAN DEFAULT FALSE,
+                    admin_can_join BOOLEAN DEFAULT FALSE,
+                    opened_in_channel_id BIGINT,
                     started_at TIMESTAMP,
                     ended_at TIMESTAMP,
                     created_at TIMESTAMP DEFAULT NOW()
@@ -181,15 +187,54 @@ class Database:
                     channel_title TEXT,
                     channel_username TEXT,
                     is_enabled BOOLEAN DEFAULT TRUE,
+                    no_requirement BOOLEAN DEFAULT FALSE,
                     created_at TIMESTAMP DEFAULT NOW(),
                     UNIQUE(draft_id, channel_id)
                 )
             """)
 
+            # Eksik kolonları ekle (migration yerine)
+            try:
+                await conn.execute("ALTER TABLE randy_drafts ADD COLUMN IF NOT EXISTS admin_can_join BOOLEAN DEFAULT FALSE")
+            except:
+                pass
+
+            try:
+                await conn.execute("ALTER TABLE randy_drafts ADD COLUMN IF NOT EXISTS selected_channel_id BIGINT")
+            except:
+                pass
+
+            try:
+                await conn.execute("ALTER TABLE randy ADD COLUMN IF NOT EXISTS admin_can_join BOOLEAN DEFAULT FALSE")
+            except:
+                pass
+
+            try:
+                await conn.execute("ALTER TABLE randy ADD COLUMN IF NOT EXISTS opened_in_channel_id BIGINT")
+            except:
+                pass
+
+            try:
+                await conn.execute("ALTER TABLE randy_allowed_channels ADD COLUMN IF NOT EXISTS no_requirement BOOLEAN DEFAULT FALSE")
+            except:
+                pass
+
+            try:
+                await conn.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS activity_count INT DEFAULT 0")
+            except:
+                pass
+
+            try:
+                await conn.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS last_activity_reset TIMESTAMP DEFAULT NOW()")
+            except:
+                pass
+
             # Indexler
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_randy_status ON randy(status)")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_randy_group ON randy(group_id)")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_randy_status_group ON randy(status, group_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_group ON telegram_users(group_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_telegram_group ON telegram_users(telegram_id, group_id)")
 
             logger.info("✅ Tablolar oluşturuldu/kontrol edildi")
 
