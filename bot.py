@@ -789,9 +789,10 @@ async def ben_command(update: Update, context):
     # Bot username'ini al
     bot_username = BOT_USERNAME or (await context.bot.get_me()).username
 
-    # Kullanıcı botu başlatmış mı kontrol et
+    # Kullanıcı botu başlatmış mı kontrol et - özelden mesaj gönder
     bot_started = False
     try:
+        # Özelden istatistik göndermeyi dene
         stats = await get_full_user_stats(user.id, chat.id)
 
         if stats:
@@ -820,7 +821,7 @@ async def ben_command(update: Update, context):
         else:
             stats_text = STATS["KAYIT_YOK"]
 
-        # Özelden istatistik gönder
+        # Özelden mesaj göndermeyi dene
         await context.bot.send_message(
             chat_id=user.id,
             text=stats_text,
@@ -841,19 +842,16 @@ async def ben_command(update: Update, context):
             disable_web_page_preview=True
         )
     else:
-        # Bot başlatılmamış - deep link + callback butonu göster
-        deep_link = f"https://t.me/{bot_username}?start=stats_{chat.id}"
-
-        keyboard = [
-            [InlineKeyboardButton("📊 Botu Başlat", url=deep_link)],
-            [InlineKeyboardButton("✅ Başlattım", callback_data=f"check_started_{user.id}")]
-        ]
+        # Bot başlatılmamış - sadece tek buton göster
+        keyboard = [[
+            InlineKeyboardButton(
+                "📊 İstatistikler için buraya bas",
+                callback_data=f"check_started_{user.id}"
+            )
+        ]]
 
         await message.reply_text(
-            f"👋 {mention}\n\n"
-            "📊 İstatistiklerini görmek için:\n"
-            "1️⃣ Önce <b>Botu Başlat</b> butonuna tıkla\n"
-            "2️⃣ Sonra <b>Başlattım</b> butonuna tıkla",
+            f"👋 {mention}",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="HTML"
         )
